@@ -35,7 +35,7 @@ from trumi.utils.interpolation_util import (
     get_interp1d,
 )
 from trumi.utils.pose_util import mat_to_pose, pose_to_mat
-from trumi.utils.timecode_util import mp4_get_start_datetime
+from trumi.utils.timecode_util import load_camera_time_offsets, mp4_get_start_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +259,11 @@ def main(
         serials = ignore_cameras.split(",")
         ignore_cam_serials = set(serials)
 
+    # optional per-camera clock corrections (seconds)
+    camera_time_offsets = load_camera_time_offsets(input_dir)
+    if camera_time_offsets:
+        logger.info("Applying camera clock offsets (s): %s", camera_time_offsets)
+
     fps = None
     rows = list()
     with ExifToolHelper() as et:
@@ -267,7 +272,9 @@ def main(
             meta = list(et.get_metadata(str(mp4_path)))[0]
             cam_serial = meta["QuickTime:CameraSerialNumber"]
             start_date = mp4_get_start_datetime(str(mp4_path))
-            start_timestamp = start_date.timestamp()
+            start_timestamp = start_date.timestamp() + camera_time_offsets.get(
+                cam_serial, 0.0
+            )
 
             if cam_serial in ignore_cam_serials:
                 logger.info("Ignored %s", video_dir.name)

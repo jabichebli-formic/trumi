@@ -1,10 +1,13 @@
 import datetime
+import json
+import pathlib
 from fractions import Fraction
 from typing import Union
 
 import av
 
 ISO_DATETIME_FMT = r"%Y-%m-%dT%H:%M:%S.%fZ"
+CAMERA_TIME_OFFSETS_FILE = "camera_time_offsets.json"
 
 
 def timecode_to_seconds(
@@ -80,3 +83,18 @@ def mp4_get_start_datetime(mp4_path: str) -> datetime.datetime:
             raise ValueError(f"No video streams found in MP4 file: {mp4_path}")
         stream = video_streams[0]
         return stream_get_start_datetime(stream=stream)
+
+
+def load_camera_time_offsets(session_dir) -> dict:
+    """Load optional per-camera clock corrections from <session_dir>/camera_time_offsets.json.
+
+    The file maps camera serial to seconds added to that camera's video start times,
+    e.g. {"C3534250043778": -0.073} if that camera's clock runs 73 ms ahead of the other.
+
+    :param session_dir: Session directory.
+    :return: Dict of {camera_serial: offset_seconds}; empty if the file does not exist.
+    """
+    path = pathlib.Path(session_dir).joinpath(CAMERA_TIME_OFFSETS_FILE)
+    if not path.is_file():
+        return {}
+    return {str(k): float(v) for k, v in json.loads(path.read_text()).items()}

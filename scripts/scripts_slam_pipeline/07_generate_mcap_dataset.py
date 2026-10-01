@@ -64,6 +64,7 @@ import av
 import click
 import cv2
 import numpy as np
+from exiftool import ExifToolHelper
 from mcap.writer import CompressionType, Writer
 from tqdm import tqdm
 
@@ -74,7 +75,7 @@ from trumi.utils.cv_util import (
     inpaint_tag,
     parse_fisheye_intrinsics,
 )
-from trumi.utils.timecode_util import mp4_get_start_datetime
+from trumi.utils.timecode_util import load_camera_time_offsets, mp4_get_start_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -681,6 +682,11 @@ def main(
 
         plan = pickle.loads(plan_path.read_bytes())
 
+        # optional per-camera clock corrections (seconds), same file as step 06
+        camera_time_offsets = load_camera_time_offsets(ipath)
+        if camera_time_offsets:
+            logger.info("Applying camera clock offsets (s): %s", camera_time_offsets)
+
         for plan_episode in plan:
             grippers = plan_episode["grippers"]
             cameras = plan_episode["cameras"]
@@ -743,6 +749,11 @@ def main(
 
                 # Wall-clock start from ExifTool (Unix epoch seconds)
                 video_wall_start = mp4_get_start_datetime(str(video_path)).timestamp()
+                if camera_time_offsets:
+                    with ExifToolHelper() as et:
+                        meta = et.get_metadata(str(video_path))[0]
+                    cam_serial = meta["QuickTime:CameraSerialNumber"]
+                    video_wall_start += camera_time_offsets.get(cam_serial, 0.0)
 
                 # GPMF per-frame offsets from video start
                 imu_json_path = video_path.parent / "imu_data.json"
