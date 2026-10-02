@@ -9,6 +9,8 @@ Usage (from ~/trumi):
     uv run python scripts/tools/episode_report.py --session <s> --offset_mm -12.3 0.3 -8.5 --calibration data/robot/marker_in_robot_base.json
 --offset_mm: correction added to every TRumi position (marker frame, mm), e.g. the average offset a touch test found,
 negated. Episodes whose video name contains "touch" are skipped.
+"CHECK" flags episodes whose path jumps faster than 3 m/s or strays > 0.9 m from the marker: SLAM tracking went
+wrong even though the pipeline kept the episode (exclude it with a check_result.txt containing "false").
 """
 
 import argparse
@@ -40,16 +42,20 @@ def main(a):
     rows = []
     print(f"{'episode':32s} {'len':>5s}  {'grasp x y z (cm)':>22s}  {'release x y z (cm)':>22s}" + ("   grasp in robot base (mm)" if T is not None else ""))
     for i, ep in enumerate(plan):
-        name = pathlib.Path(ep["cameras"][0]["video_path"]).parent.name
+        name = "_".join(pathlib.Path(ep["cameras"][0]["video_path"]).parent.name.split("_")[4:])  # drop demo_<serial>_<date>_<time>_
         if "touch" in name:
             continue
         t = np.asarray(ep["episode_timestamps"], float)
         p = np.asarray(ep["grippers"][0]["tcp_pose"], float)[:, :3] + off
         g, r = events(np.asarray(ep["grippers"][0]["gripper_width"], float))
         fmt = lambda k: " ".join(f"{v*100:6.1f}" for v in p[k]) if k is not None else f"{'none':>20s}"
-        line = f"ep{i + 1:<3d}{name.split('_')[-1][:28]:28s} {t[-1] - t[0]:4.1f}s  {fmt(g):>22s}  {fmt(r):>22s}"
+        v = np.linalg.norm(np.diff(p, axis=0), axis=1) / np.diff(t)
+        n_jumps, far = int((v > 3).sum()), float(np.linalg.norm(p[:, :2], axis=1).max())
+        line = f"ep{i + 1:<3d}{name[:28]:28s} {t[-1] - t[0]:4.1f}s  {fmt(g):>22s}  {fmt(r):>22s}"
         if T is not None and g is not None:
             line += "   " + " ".join(f"{v*1000:7.1f}" for v in (T @ np.r_[p[g], 1])[:3])
+        if n_jumps or far > 0.9:
+            line += f"   CHECK: {n_jumps} jumps > 3 m/s, farthest {far:.2f} m from the marker"
         print(line)
         rows.append((p[g] if g is not None else None, p[r] if r is not None else None))
     for k, label in ((0, "grasp"), (1, "release")):
