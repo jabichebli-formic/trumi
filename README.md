@@ -6,6 +6,7 @@
 - [Dataset Generation Pipeline](#dataset-generation-pipeline)
 - [Data Collection](#data-collection)
 - [Dataset Formats](#dataset-formats)
+- [Additional Tools](#additional-tools)
 - [Documentation](#documentation)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
@@ -246,6 +247,37 @@ uv run python scripts/dataset_generation_pipeline.py -f zarr <session_dir>
 **Zarr** — A single `dataset.zarr.zip` archive containing all episodes in a flat NumPy-backed replay buffer with JpegXl-compressed images.
 
 Both formats store per-step end-effector pose (position + axis-angle rotation), gripper width, demo start/end poses, and camera images. MCAP additionally includes raw IMU samples.
+
+
+## Additional Tools
+
+Helpers added in this fork. Run from the repository root; recordings and outputs are kept in `data/` (not versioned).
+
+**Session quality checks** (`scripts/tools/`, TRumi environment):
+
+- `bash scripts/tools/test_mappings.sh <out_dir> <mapping videos...>`: build a SLAM map from each mapping take
+  (pipeline steps 01 + 02) and report which ones work. Prefer takes whose map starts from the marker
+  (`tag_init_success=1`).
+- `bash scripts/tools/eval_maps.sh <session_dir> <candidate_dirs...>`: for each candidate map, check that the
+  session's demos localize in it and that the mapping-marker calibration is tight ("Tag position std" ≈ 1–2 cm).
+- `uv run python scripts/tools/make_3d_video.py --session <session_dir> --episode N`: video of an episode with
+  the camera views and the 3D gripper-tip paths.
+
+**Per-session clock correction**: if the two cameras' clocks have drifted apart, put
+`camera_time_offsets.json` (e.g. `{"<camera serial>": -0.073}`, seconds added to that camera's start times) in
+the session directory; steps 06 and 07 apply it.
+
+**Simulation** (`scripts/sim/`, separate MuJoCo environment; set up once with `bash scripts/sim/setup_sim.sh`):
+
+- `data/sim/.venv/bin/python scripts/sim/view_scan.py --glb <scan.glb>`: view a phone scan (e.g. Scaniverse).
+- `data/sim/.venv/bin/python scripts/sim/view_twin.py`: the scanned cell with a UR5e + Robotiq 2F-85 placed
+  where the real robot stands; move the joints with the viewer's Control sliders.
+- `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/replay_ur5e.py --session <dir> --episode N --arm right`:
+  replay one TRumi arm on a simulated UR5e + 2F-85 and render it next to the GoPro view (stand-in robot
+  placement; not yet calibrated to a real robot).
+
+Marker axes used by the pipeline (origin at the centre, +x right, +y up, +z out of the marker):
+`assets/marker13_axes.png`.
 
 
 ## Documentation
