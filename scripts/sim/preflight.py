@@ -157,17 +157,25 @@ def main(a):
         gopro = read_video_frames(session / "demos" / cam_meta["video_path"],
                                   [cam_meta["video_start_end"][0] + SLAM_STRIDE * s for s in steps])
     r = mujoco.Renderer(pl.m, 480, 640)
+    r_close = mujoco.Renderer(pl.m, 200, 260)  # inset: close-up that follows the gripper
+    vclose = mujoco.MjvCamera()
+    vclose.distance, vclose.azimuth, vclose.elevation = 0.45, 110.0, -20.0
     vc = mujoco.MjvCamera()
     vc.lookat[:] = p_w.mean(0)
     vc.distance, vc.azimuth, vc.elevation = 1.6, 110.0, -30.0
     tmp = out / f"{stem}_tmp.mp4"
     ff = subprocess.Popen(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "1280x480", "-r",
                            str(OUT_FPS), "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(tmp)], stdin=subprocess.PIPE)
+    d = mujoco.MjData(pl.m)  # arm set kinematically; the gripper linkage is simulated so the fingers open/close
+    substeps = max(1, round((1 / OUT_FPS) / pl.m.opt.timestep))
     for n, s in enumerate(steps):
-        pl.d.qpos[:] = 0
-        pl.d.qpos[:6] = qs[s]
-        mujoco.mj_forward(pl.m, pl.d)
-        r.update_scene(pl.d, camera=vc)
+        d.ctrl[:6] = qs[s]
+        d.ctrl[6] = grip[s]
+        for _ in range(substeps):
+            d.qpos[:6] = qs[s]
+            d.qvel[:6] = 0
+            mujoco.mj_step(pl.m, d)
+        r.update_scene(d, camera=vc)
         sc = r.scene
         for k in range(0, len(p_w), 6):
             if sc.ngeom >= sc.maxgeom:
@@ -176,7 +184,13 @@ def main(a):
             mujoco.mjv_initGeom(sc.geoms[sc.ngeom], mujoco.mjtGeom.mjGEOM_SPHERE, [0.004, 0, 0], p_w[k],
                                 np.eye(3).flatten(), np.array(col, dtype=np.float32))
             sc.ngeom += 1
-        ff.stdin.write(np.hstack([r.render(), gopro[n]]).tobytes())
+        twin = r.render().copy()
+        vclose.lookat[:] = d.site_xpos[pl.site]
+        r_close.update_scene(d, camera=vclose)
+        twin[-204:-4, -264:-4] = r_close.render()
+        twin[-206:-204, -266:-2] = twin[-4:-2, -266:-2] = 255  # white frame around the inset
+        twin[-206:-2, -266:-264] = twin[-206:-2, -4:-2] = 255
+        ff.stdin.write(np.hstack([twin, gopro[n]]).tobytes())
     ff.stdin.close()
     ff.wait()
     label = (f"drawtext=fontfile={FONT}:text='twin pre-flight ({'PASS' if ok else 'CHECK REPORT'})':x=10:y=10:fontsize=20:"
