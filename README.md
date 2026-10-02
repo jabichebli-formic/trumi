@@ -280,6 +280,8 @@ the session directory; steps 06 and 07 apply it.
   placement; not yet calibrated to a real robot).
 - `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/plan_cell.py`: plan a session in the twin using the cell
   geometry in `data/sim/cell.json`: marker-touch reach, belt pick map, box drops, box placement, parking pose.
+- `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/render_cell.py [--session <dir>]`: three views of the twin
+  (scan, ArUco marker, box, robot), optionally with every episode's grasp and release positions.
 - `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/preflight.py --session <dir> --episode N`: replay an episode
   with the robot at its calibrated position; checks reach, joint limits, speed and collisions with the cell, and
   writes a robot-ready joint trajectory (`--z_offset_mm` for an in-the-air rehearsal, `--correction_mm` to remove

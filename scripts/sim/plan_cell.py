@@ -40,6 +40,9 @@ CLEARANCE = 0.01  # report contacts closer than 1 cm as collisions
 OBSTACLE_RGBA = [0.2, 0.6, 1.0, 0.35]
 
 
+ARUCO_13_BITS = ["000000", "000100", "010100", "000000", "011110", "000000"]  # DICT_4X4_50 id 13, top row first, 1 = white
+
+
 def axes(yaw_deg):
     a = np.radians(yaw_deg)
     return np.array([np.cos(a), np.sin(a), 0.0]), np.array([-np.sin(a), np.cos(a), 0.0])
@@ -77,8 +80,18 @@ def add_obstacles(spec, cell):
     mk = cell["marker"]
     box("marker_board", [mk["centre"][0], mk["centre"][1], mk["centre"][2] - 0.0015], [0.095, 0.095, 0.0015],
         mk["yaw_deg"], rgba=[1, 1, 1, 0.9])
-    box("marker_black", [mk["centre"][0], mk["centre"][1], mk["centre"][2] + 0.0002], [mk["size"] / 2, mk["size"] / 2, 0.0002],
-        mk["yaw_deg"], rgba=[0, 0, 0, 1], collide=False)
+    # the printed ArUco pattern, visual only; drawn at "visual_z" (the scanned table surface) when the scan sits above the
+    # robot-measured table, otherwise it would be hidden inside the scan
+    mx, my = axes(mk["yaw_deg"])
+    zv = mk.get("visual_z", mk["centre"][2]) + 0.0003
+    cs = mk["size"] / 6
+    box("marker_paper", [mk["centre"][0], mk["centre"][1], zv - 0.0002], [0.095, 0.095, 0.0001], mk["yaw_deg"],
+        rgba=[1, 1, 1, 1], collide=False)
+    for r, row in enumerate(ARUCO_13_BITS):
+        for c, bit in enumerate(row):
+            if bit == "0":
+                cc = np.array(mk["centre"][:2]) + ((c - 2.5) * cs) * mx[:2] + ((2.5 - r) * cs) * my[:2]
+                box(f"marker_bit_{r}{c}", [cc[0], cc[1], zv], [cs / 2, cs / 2, 0.0001], mk["yaw_deg"], rgba=[0, 0, 0, 1], collide=False)
     bx = cell.get("box")
     if not bx:  # e.g. during calibration the box is not on the table yet
         return names
@@ -86,9 +99,10 @@ def add_obstacles(spec, cell):
     L, W, Hh = bx["size"]
     bb = np.array(bx["centre"], dtype=float)
     brown = [0.65, 0.45, 0.25, 0.6]
-    box("box_floor", bb + [0, 0, 0.003], [L / 2, W / 2, 0.003], bx["yaw_deg"], rgba=brown)
-    for nm, off, half in [("box_wall_px", L / 2 * kx, [0.003, W / 2, Hh / 2]), ("box_wall_nx", -L / 2 * kx, [0.003, W / 2, Hh / 2]),
-                          ("box_wall_py", W / 2 * ky, [L / 2, 0.003, Hh / 2]), ("box_wall_ny", -W / 2 * ky, [L / 2, 0.003, Hh / 2])]:
+    t = bx.get("wall_m", 0.006) / 2  # half wall thickness; size = outside dimensions
+    box("box_floor", bb + [0, 0, t], [L / 2, W / 2, t], bx["yaw_deg"], rgba=brown)
+    for nm, off, half in [("box_wall_px", (L / 2 - t) * kx, [t, W / 2, Hh / 2]), ("box_wall_nx", -(L / 2 - t) * kx, [t, W / 2, Hh / 2]),
+                          ("box_wall_py", (W / 2 - t) * ky, [L / 2, t, Hh / 2]), ("box_wall_ny", -(W / 2 - t) * ky, [L / 2, t, Hh / 2])]:
         box(nm, bb + off + [0, 0, Hh / 2], half, bx["yaw_deg"], rgba=brown)
     return names
 
