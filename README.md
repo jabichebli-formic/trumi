@@ -275,6 +275,22 @@ the session directory; steps 06 and 07 apply it.
 - `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/replay_ur5e.py --session <dir> --episode N --arm right`:
   replay one TRumi arm on a simulated UR5e + 2F-85 and render it next to the GoPro view (stand-in robot
   placement; not yet calibrated to a real robot).
+- `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/plan_cell.py`: plan a session in the twin using the cell
+  geometry in `data/sim/cell.json`: marker-touch reach, belt pick map, box drops, box placement, parking pose.
+- `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/preflight.py --session <dir> --episode N`: replay an episode
+  with the robot at its calibrated position; checks reach, joint limits, speed and collisions with the cell, and
+  writes a robot-ready joint trajectory (`--z_offset_mm` for an in-the-air rehearsal).
+
+**Real UR5e** (`scripts/robot/`, sim environment + `ur_rtde`):
+
+- `scripts/robot/calibrate_marker.py --robot_ip <IP>`: measure the marker's pose in the robot base frame by
+  touching its centre and 4 corners in freedrive (read-only; `--manual` to type pendant values, `--self_test`).
+- `scripts/robot/replay_on_robot.py --trajectory <file> [--robot_ip <IP> --execute]`: replay a pre-flighted
+  trajectory in joint space; dry run by default, confirmations before moving, speed caps, logs actual vs plan.
+
+**Accuracy**: `uv run python scripts/tools/touch_test.py --session <dir> --video touchtest` measures TRumi's true
+accuracy from a recording where the fingertips touch the marker centre and corners (`--exclude` then keeps that
+recording out of the dataset).
 
 Marker axes used by the pipeline (origin at the centre, +x right, +y up, +z out of the marker):
 `assets/marker13_axes.png`.

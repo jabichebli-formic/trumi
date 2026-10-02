@@ -49,7 +49,13 @@ def mesh_without_scanned_robot(bx, by):
     return dst
 
 
-def build_twin(show_scanned_robot=False):
+def twin_spec(show_scanned_robot=False, controller_yaw_deg=None):
+    """The twin as an uncompiled MjSpec (so callers can add obstacles), plus base position and start pose.
+
+    controller_yaw_deg: heading of the UR controller's base frame (+x axis) in scan coordinates. With the Menagerie
+    model's default base orientation the controller frame is aligned with the scan axes (yaw 0), because the model's
+    base body is rotated 180 deg and its frame is itself rotated 180 deg relative to the controller frame.
+    """
     bx, by, _ = np.load(SCAN / "base_circle.npy")
     pose_file = SCAN / "scan_robot_pose.npy"
     q0 = np.load(pose_file)[3:] if pose_file.is_file() else np.array([0, -1.57, 1.57, -1.57, -1.57, 0])
@@ -58,6 +64,9 @@ def build_twin(show_scanned_robot=False):
     spec.option.impratio = 10  # settings recommended by the 2F-85 model
     spec.option.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
     spec.body("base").pos = [bx, by, BASE_Z]
+    if controller_yaw_deg is not None:  # default model base quat (0, 0, 0, -1) = 180 deg; controller frame = scan axes
+        a = np.radians(controller_yaw_deg + 180.0) / 2
+        spec.body("base").quat = [np.cos(a), 0.0, 0.0, np.sin(a)]
     gripper = mujoco.MjSpec.from_file(str(MENAGERIE / "robotiq_2f85" / "2f85.xml"))
     spec.attach(gripper, site=spec.site("attachment_site"), prefix="g_")
 
@@ -73,13 +82,17 @@ def build_twin(show_scanned_robot=False):
     spec.visual.headlight.diffuse = [0.2, 0.2, 0.2]
     spec.visual.global_.offwidth = 1920
     spec.visual.global_.offheight = 960
+    return spec, np.array([bx, by, BASE_Z]), q0
 
+
+def build_twin(show_scanned_robot=False):
+    spec, base, q0 = twin_spec(show_scanned_robot)
     model = spec.compile()
     data = mujoco.MjData(model)
     data.qpos[:6] = q0
     data.ctrl[:6] = q0
     mujoco.mj_forward(model, data)
-    return model, data, np.array([bx, by, BASE_Z])
+    return model, data, base
 
 
 def render_preview(model, data, base, out):
