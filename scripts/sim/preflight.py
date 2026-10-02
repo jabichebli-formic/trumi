@@ -190,7 +190,8 @@ if __name__ == "__main__":
     ap.add_argument("--arm", choices=list(ARMS), default="right", help="which arm, for two-gripper sessions")
     ap.add_argument("--calibration", type=pathlib.Path, default=REPO / "data" / "robot" / "marker_in_robot_base.json")
     ap.add_argument("--cell", type=pathlib.Path, default=REPO / "data" / "sim" / "cell.json")
-    ap.add_argument("--tcp_z_mm", type=float, default=None, help="real TCP offset from the flange (pendant); default = model")
+    ap.add_argument("--tcp_z_mm", type=float, default=173.8,
+                    help="TCP offset from the flange: 173.8 mm = closed Robotiq fingertip ends, as set on this robot")
     ap.add_argument("--speed_cap_deg_s", type=float, default=45.0, help="joint speed cap for the hardware replay")
     ap.add_argument("--z_offset_mm", type=float, default=0.0, help="lift the whole path by this much (in-the-air rehearsal)")
     ap.add_argument("--no_video", action="store_true", help="skip the GoPro panel (e.g. for synthetic test episodes)")

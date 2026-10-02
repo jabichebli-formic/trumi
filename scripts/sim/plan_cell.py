@@ -79,7 +79,9 @@ def add_obstacles(spec, cell):
         mk["yaw_deg"], rgba=[1, 1, 1, 0.9])
     box("marker_black", [mk["centre"][0], mk["centre"][1], mk["centre"][2] + 0.0002], [mk["size"] / 2, mk["size"] / 2, 0.0002],
         mk["yaw_deg"], rgba=[0, 0, 0, 1], collide=False)
-    bx = cell["box"]
+    bx = cell.get("box")
+    if not bx:  # e.g. during calibration the box is not on the table yet
+        return names
     kx, ky = axes(bx["yaw_deg"])
     L, W, Hh = bx["size"]
     bb = np.array(bx["centre"], dtype=float)
@@ -267,7 +269,7 @@ def main(cell_path):
     cell = json.load(open(cell_path))
     out = REPO / "data" / "sim" / "plan"
     out.mkdir(parents=True, exist_ok=True)
-    pl = Planner(cell)
+    pl = Planner(cell, controller_yaw_deg=cell.get("controller_yaw_deg"), tcp_z_mm=cell.get("tcp_z_mm"))
     td = TopDown()
     summary = {"cell": str(cell_path)}
     lines = []

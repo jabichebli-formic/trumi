@@ -39,6 +39,7 @@ POINTS = {  # marker-frame coordinates (m); corner order matches the pipeline (s
     "BL (bottom-left)": (-H, -H, 0.0),
 }
 FIT_WARN_MM = 3.0
+DUPLICATE_M = 0.015  # a touch this close to the previous one is treated as a double Enter
 
 
 def fit_rigid(A, B):
@@ -111,14 +112,54 @@ def collect_robot(ip, rounds):
     touches, joints = [], []
     for r in range(rounds):
         print(f" round {r + 1} of {rounds} (lift the gripper off between touches)")
-        for n in POINTS:
-            input(f"  touch {n:18s} then press Enter ")
-            samples = [rr.getActualTCPPose()[:3] for _ in range(25)]  # average 25 readings (robot held still)
-            touches.append((n, np.mean(samples, 0)))
+        names = list(POINTS)
+        i = 0
+        while i < len(names):
+            n = names[i]
+            line = wait_with_live_guidance(rr, n, touches)
+            if line.strip().lower() == "r":
+                if touches and len(touches) > r * len(names):
+                    dropped = touches.pop()
+                    joints.pop()
+                    print(f"    removed the previous touch ({dropped[0]}); touch it again")
+                    i -= 1
+                continue
+            p = np.mean([rr.getActualTCPPose()[:3] for _ in range(25)], 0)  # robot held still
+            if touches and np.linalg.norm(p - touches[-1][1]) < DUPLICATE_M:
+                print(f"    within {DUPLICATE_M*100:.1f} cm of the previous touch: Enter pressed twice? Not recorded, touch {n} again")
+                continue
+            touches.append((n, p))
             joints.append((n, list(rr.getActualQ())))
-            print(f"    TCP = {np.round(touches[-1][1] * 1000, 1)} mm (spread {np.ptp(samples, 0).max()*1000:.2f} mm)")
+            print(f"    recorded {n}: TCP = {np.round(p * 1000, 1)} mm")
+            i += 1
     rr.disconnect()
     return touches, joints
+
+
+def wait_with_live_guidance(rr, name, touches):
+    """Wait for Enter while showing where the fingertip is relative to the centre and the previous corner."""
+    import select
+    import sys
+
+    centre = next((p for m, p in touches if m == "centre"), None)
+    prev_corner = next((p for m, p in reversed(touches) if m != "centre"), None)
+    corner_order = [m for m in POINTS if m != "centre"]
+    print(f"  touch {name}, then press Enter   (type r + Enter to redo the previous point)")
+    while True:
+        p = np.array(rr.getActualTCPPose()[:3])
+        parts = []
+        if centre is not None and name != "centre":
+            parts.append(f"to centre {np.linalg.norm((p - centre)[:2])*1000:6.1f} mm (corner: {H*np.sqrt(2)*1000:.1f})")
+            parts.append(f"height vs centre {(p - centre)[2]*1000:+5.1f} mm")
+        if prev_corner is not None and name != "centre":
+            prev_name = next(m for m, q in reversed(touches) if m != "centre")
+            if corner_order.index(prev_name) == (corner_order.index(name) - 1) % 4:
+                parts.append(f"to {prev_name.split()[0]} {np.linalg.norm((p - prev_corner)[:2])*1000:6.1f} mm (side: {MARKER_SIZE*1000:.0f})")
+        sys.stdout.write("\r    " + (" | ".join(parts) if parts else f"TCP {np.round(p*1000, 1)} mm") + "   ")
+        sys.stdout.flush()
+        if select.select([sys.stdin], [], [], 0.2)[0]:
+            sys.stdout.write("\n")
+            return sys.stdin.readline()
 
 
 def self_test():
