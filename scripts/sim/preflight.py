@@ -77,6 +77,8 @@ def main(a):
     cell = json.loads(json.dumps(cell))
     cell["marker"]["centre"] = T_world_marker[:3, 3].tolist()
     cell["marker"]["yaw_deg"] = float(np.degrees(np.arctan2(T_world_marker[1, 0], T_world_marker[0, 0])))
+    if a.no_box:
+        cell["box"] = None
 
     # --- episode: TRumi fingertip -> Robotiq fingertip targets
     ep = pickle.load(open(session / "dataset_plan.pkl", "rb"))[a.episode - 1]
@@ -87,6 +89,7 @@ def main(a):
     width = np.asarray(ep["grippers"][g]["gripper_width"], float)
     pos, rot, n_jumps, n_floor = clean_trajectory(t, pose[:, :3], R.from_rotvec(pose[:, 3:]))
     rot_r = rot * R.from_matrix(TRUMI_TO_ROBOTIQ)
+    pos = pos + np.array(a.correction_mm) / 1000  # systematic TRumi offset measured by a touch test (marker frame)
     pos = pos + [0, 0, a.z_offset_mm / 1000]  # "in the air" rehearsal: lift the whole path (marker frame z = up)
     p_ctrl = pos @ T_ctrl_marker[:3, :3].T + T_ctrl_marker[:3, 3]
     R_ctrl = R.from_matrix(T_ctrl_marker[:3, :3]) * rot_r
@@ -131,7 +134,9 @@ def main(a):
            "collisions: " + ("none" if not collisions else
                              "; ".join(f"{k} at {v[0]:.1f}-{v[-1]:.1f} s ({len(v)} frames)" for k, v in collisions.items())),
            f"TCP (fingertip) offset used: {a.tcp_z_mm if a.tcp_z_mm else 155.8} mm from the flange (set the same on the pendant)",
-           f"path lifted by {a.z_offset_mm:.0f} mm (in-the-air rehearsal)" if a.z_offset_mm else "path at recorded height"]
+           f"path lifted by {a.z_offset_mm:.0f} mm (in-the-air rehearsal)" if a.z_offset_mm else "path at recorded height",
+           f"TRumi correction (marker frame x y z): {a.correction_mm} mm",
+           "box: NOT CHECKED (--no_box)" if a.no_box else "box: from the cell file"]
     (out / f"{stem}_report.txt").write_text("\n".join(rep) + "\n")
 
     traj = {"description": "joint-space trajectory for the real UR5e (UR controller base frame); times already slowed down",
@@ -139,7 +144,8 @@ def main(a):
             "speed_cap_deg_s": a.speed_cap_deg_s, "slowdown": slow, "tcp_z_mm": a.tcp_z_mm or 155.8,
             "t_s": (t * slow).round(4).tolist(), "q_rad": qs.round(6).tolist(),
             "tcp_pose_ctrl": [list(p) + list(r) for p, r in zip(p_ctrl.round(5), R_ctrl.as_rotvec().round(5))],
-            "gripper_0open_255closed": grip.round(1).tolist(), "preflight_pass": bool(ok), "z_offset_mm": a.z_offset_mm}
+            "gripper_0open_255closed": grip.round(1).tolist(), "preflight_pass": bool(ok), "z_offset_mm": a.z_offset_mm,
+            "correction_mm": a.correction_mm, "box_checked": not a.no_box}
     json.dump(traj, open(out / f"{stem}_robot_trajectory.json", "w"))
 
     # --- video: twin replay (left) + GoPro (right)
@@ -194,5 +200,8 @@ if __name__ == "__main__":
                     help="TCP offset from the flange: 173.8 mm = closed Robotiq fingertip ends, as set on this robot")
     ap.add_argument("--speed_cap_deg_s", type=float, default=45.0, help="joint speed cap for the hardware replay")
     ap.add_argument("--z_offset_mm", type=float, default=0.0, help="lift the whole path by this much (in-the-air rehearsal)")
+    ap.add_argument("--correction_mm", type=float, nargs=3, default=[0.0, 0.0, 0.0],
+                    help="add this to every TRumi position (marker frame x y z, mm), e.g. minus a touch test's average offset")
+    ap.add_argument("--no_box", action="store_true", help="leave the box out of the collision check (position unknown)")
     ap.add_argument("--no_video", action="store_true", help="skip the GoPro panel (e.g. for synthetic test episodes)")
     main(ap.parse_args())

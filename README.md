@@ -262,6 +262,9 @@ Helpers added in this fork. Run from the repository root; recordings and outputs
   session's demos localize in it and that the mapping-marker calibration is tight ("Tag position std" ≈ 1–2 cm).
 - `uv run python scripts/tools/make_3d_video.py --session <session_dir> --episode N`: video of an episode with
   the camera views and the 3D gripper-tip paths.
+- `uv run python scripts/tools/episode_report.py --session <session_dir>`: where the gripper closed (grasp) and
+  opened (release) in each episode, in the marker frame (and robot base frame with `--calibration`), plus the
+  spread across episodes.
 
 **Per-session clock correction**: if the two cameras' clocks have drifted apart, put
 `camera_time_offsets.json` (e.g. `{"<camera serial>": -0.073}`, seconds added to that camera's start times) in
@@ -279,7 +282,8 @@ the session directory; steps 06 and 07 apply it.
   geometry in `data/sim/cell.json`: marker-touch reach, belt pick map, box drops, box placement, parking pose.
 - `MUJOCO_GL=egl data/sim/.venv/bin/python scripts/sim/preflight.py --session <dir> --episode N`: replay an episode
   with the robot at its calibrated position; checks reach, joint limits, speed and collisions with the cell, and
-  writes a robot-ready joint trajectory (`--z_offset_mm` for an in-the-air rehearsal).
+  writes a robot-ready joint trajectory (`--z_offset_mm` for an in-the-air rehearsal, `--correction_mm` to remove
+  a systematic offset found by a touch test, `--no_box` if the box position is unknown).
 
 **Real UR5e** (`scripts/robot/`, sim environment + `ur_rtde`):
 
