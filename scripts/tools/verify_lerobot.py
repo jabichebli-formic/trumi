@@ -4,7 +4,8 @@ Checks every frame of every episode: the image decodes and is not black (outside
 (identical to the previous frame), state/action are finite and in range, timestamps step by 1/fps, episode lengths
 match the metadata. Then, for a few random frames per episode, it decodes the original GoPro frame, applies the same
 mask and resize, and compares it with the dataset frame (PSNR): this proves each dataset frame is the right moment
-of the right source video. Finally writes thumbnails.png (one frame per episode) next to the dataset.
+of the right source video. Finally writes <root>_thumbnails.png (one frame per episode) next to the dataset folder
+(not inside it, so it is not uploaded with the dataset).
 
 Usage (from ~/trumi):
     ~/YAM/yam-lerobot/.venv/bin/python scripts/tools/verify_lerobot.py --root data/lerobot/<name>
@@ -98,8 +99,9 @@ def main(a):
         im = cv2.resize(im, (w, h), interpolation=cv2.INTER_AREA)
         cv2.putText(im, f"{k}: {sources[k][2].split('.')[0]}", (3, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
         sheet[(k // cols) * h:(k // cols + 1) * h, (k % cols) * w:(k % cols + 1) * w] = im
-    cv2.imwrite(str(a.root / "thumbnails.png"), cv2.cvtColor(sheet, cv2.COLOR_RGB2BGR))
-    print(f"saved {a.root / 'thumbnails.png'}")
+    thumbs_path = a.root.parent / f"{a.root.name}_thumbnails.png"
+    cv2.imwrite(str(thumbs_path), cv2.cvtColor(sheet, cv2.COLOR_RGB2BGR))
+    print(f"saved {thumbs_path}")
     print("RESULT:", "OK" if not problems and psnr.min() > 30 else "CHECK THE PROBLEMS ABOVE")
 
 

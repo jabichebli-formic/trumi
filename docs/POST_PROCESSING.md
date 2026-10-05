@@ -92,6 +92,10 @@ i. **Checks** (in each `<out_subdir>/ep<N>_right_report.txt`): reach (IK error),
   as the trainer will; flags black/frozen frames, bad values, timing, length mismatches; compares random frames with
   the original GoPro video (PSNR > 30 dB = exactly the right frame; one frame off gives ~22 dB); writes
   `thumbnails.png`.
+- Twin replay straight from the dataset (what the policy trains on): `~/YAM/yam-lerobot/.venv/bin/python
+  scripts/tools/lerobot_dump_states.py --root data/lerobot/<name>`, then `MUJOCO_GL=egl data/sim/.venv/bin/python
+  scripts/sim/replay_dataset.py --dump data/lerobot/<name>_review`: the twin is driven by each frame's stored state,
+  next to the stored wrist image; reports contacts and time above 180 deg/s from the stored joints.
 - Visual check in Rerun: `~/YAM/yam-lerobot/.venv/bin/lerobot-dataset-viz --repo-id <repo_id> --root
   data/lerobot/<name> --episode-index N` (`trumi_sources.csv` maps dataset episodes to source videos).
 
