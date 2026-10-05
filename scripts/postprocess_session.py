@@ -131,7 +131,7 @@ def stage_retarget(s, cfg, st, log):
     if out.exists():
         shutil.rmtree(out)
     (out / "logs").mkdir(parents=True)
-    common = ["--session", s, "--no_video", "--out_subdir", r["out_subdir"], "--calibration", REPO / r["calibration"],
+    common = ["--session", s, *([] if r.get("videos") else ["--no_video"]), "--out_subdir", r["out_subdir"], "--calibration", REPO / r["calibration"],
               "--cell", REPO / r["cell"], "--tcp_z_mm", r["tcp_z_mm"], "--smooth_s", r["smooth_s"],
               "--correction_mm", *r["correction_mm"], "--gripper_tables", REPO / r["gripper_tables"],
               "--reference_q_deg", *r["reference_q_deg"]]
@@ -199,6 +199,8 @@ def stage_report(s, cfg, st, log):
 def main(a):
     cfg = json.load(open(a.config))
     cfg["_path"] = str(a.config)
+    if a.videos:
+        cfg["retarget"]["videos"] = True
     s = a.session.resolve()
     log = s / "postprocess.log"
     state_file = s / "postprocess_state.json"
@@ -214,4 +216,5 @@ if __name__ == "__main__":
     ap.add_argument("--session", type=pathlib.Path, required=True)
     ap.add_argument("--config", type=pathlib.Path, required=True)
     ap.add_argument("--stages", nargs="+", default=STAGES, choices=STAGES)
+    ap.add_argument("--videos", action="store_true", help="retarget: also render review videos (twin + GoPro), slower")
     main(ap.parse_args())

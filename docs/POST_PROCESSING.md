@@ -80,6 +80,21 @@ i. **Checks** (in each `<out_subdir>/ep<N>_right_report.txt`): reach (IK error),
 - Quantile statistics (q01 ... q99, needed by pi0.5) are computed by LeRobot when the dataset is written.
 - Provenance: `trumi_sources.csv` (dataset episode -> source video) and `trumi_export_info.json` next to `meta/`.
 
+### B4b. Review and verification (run after every export)
+- `uv run python scripts/tools/review_retarget.py --session data/<session> --retarget data/<session>/<retarget folder>`:
+  per episode, raw vs final fingertip path, change at grasp/release, joint speeds vs 180 deg/s, gripper and arc;
+  `review/overview.png` for all episodes. Large changes should only appear at tracking spikes (brief raw jumps).
+  Joint-speed bursts with a smooth fingertip path mean the arm passes near a singularity (e.g. the wrist close to the
+  base axis); such episodes are worth excluding *(ep_4: 0.45 s up to 497 deg/s, wrist 15 cm from the base axis)*.
+- Review videos (twin + GoPro): `postprocess_session.py ... --stages retarget --videos` writes
+  `<retarget folder>/ep<N>_right_preflight.mp4`. (Runs with `--no_video` write no video at all.)
+- `~/YAM/yam-lerobot/.venv/bin/python scripts/tools/verify_lerobot.py --root data/lerobot/<name>`: decodes every frame
+  as the trainer will; flags black/frozen frames, bad values, timing, length mismatches; compares random frames with
+  the original GoPro video (PSNR > 30 dB = exactly the right frame; one frame off gives ~22 dB); writes
+  `thumbnails.png`.
+- Visual check in Rerun: `~/YAM/yam-lerobot/.venv/bin/lerobot-dataset-viz --repo-id <repo_id> --root
+  data/lerobot/<name> --episode-index N` (`trumi_sources.csv` maps dataset episodes to source videos).
+
 ### B5. `report`
 `data/<session>/postprocess_report.md`: episode counts, exclusions with reasons, retargeting checks, output path.
 

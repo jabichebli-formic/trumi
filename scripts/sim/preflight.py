@@ -103,6 +103,7 @@ def main(a):
     t = ts - ts[0]
     pose = np.asarray(ep["grippers"][g]["tcp_pose"], float)
     width = np.asarray(ep["grippers"][g]["gripper_width"], float)
+    raw_pos = pose[:, :3] + np.array(a.correction_mm) / 1000 + [0, 0, a.z_offset_mm / 1000]  # for review: before clean-up/smoothing
     pos, rot, n_jumps, n_floor = clean_trajectory(t, pose[:, :3], R.from_rotvec(pose[:, 3:]))
     if a.smooth_s > 0:
         pos, rot = smooth_pose(t, pos, rot, a.smooth_s)
@@ -206,19 +207,22 @@ def main(a):
             "tcp_pose_ctrl": [list(p) + list(r) for p, r in zip((p_ctrl + setback[:, None] / 1000 * R_ctrl.as_matrix()[:, :, 2]).round(5),
                                                                 R_ctrl.as_rotvec().round(5))],
             "fingertip_target_ctrl": p_ctrl.round(5).tolist(), "fingertip_setback_mm": setback.round(2).tolist(),
+            "fingertip_raw_ctrl": (raw_pos @ T_ctrl_marker[:3, :3].T + T_ctrl_marker[:3, 3]).round(5).tolist(),
+            "t_recorded_s": t.round(4).tolist(), "gripper_width_m": width.round(5).tolist(),
             "gripper_tables": str(a.gripper_tables) if a.gripper_tables else None,
             "gripper_0open_255closed": grip.round(1).tolist(), "preflight_pass": bool(ok), "z_offset_mm": a.z_offset_mm,
             "correction_mm": a.correction_mm, "box_checked": not a.no_box}
     json.dump(traj, open(out / f"{stem}_robot_trajectory.json", "w"))
 
+    if a.no_video:  # checks and trajectory only; no half-empty video
+        print("\n".join(rep))
+        print(f"saved {out/(stem + '_report.txt')}, {out/(stem + '_robot_trajectory.json')} (no video: --no_video)")
+        return
     # --- video: twin replay (left) + GoPro (right)
     steps = list(range(0, len(t), 60 // OUT_FPS))
     cam_meta = ep["cameras"][g]
-    if a.no_video:
-        gopro = [np.zeros((480, 640, 3), np.uint8)] * len(steps)
-    else:
-        gopro = read_video_frames(session / "demos" / cam_meta["video_path"],
-                                  [cam_meta["video_start_end"][0] + SLAM_STRIDE * s for s in steps])
+    gopro = read_video_frames(session / "demos" / cam_meta["video_path"],
+                              [cam_meta["video_start_end"][0] + SLAM_STRIDE * s for s in steps])
     r = mujoco.Renderer(pl.m, 480, 640)
     r_close = mujoco.Renderer(pl.m, 200, 260)  # inset: close-up that follows the gripper
     vclose = mujoco.MjvCamera()
@@ -287,5 +291,5 @@ if __name__ == "__main__":
     ap.add_argument("--gripper_tables", type=pathlib.Path, default=None,
                     help="measured width->command table and fingertip arc (scripts/tools/gripper_sweep_table.py output)")
     ap.add_argument("--no_box", action="store_true", help="leave the box out of the collision check (position unknown)")
-    ap.add_argument("--no_video", action="store_true", help="skip the GoPro panel (e.g. for synthetic test episodes)")
+    ap.add_argument("--no_video", action="store_true", help="checks and trajectory only, no video (fast batch runs)")
     main(ap.parse_args())
