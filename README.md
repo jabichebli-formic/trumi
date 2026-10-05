@@ -262,6 +262,9 @@ Helpers added in this fork. Run from the repository root; recordings and outputs
   session's demos localize in it and that the mapping-marker calibration is tight ("Tag position std" ≈ 1–2 cm).
 - `uv run python scripts/tools/make_3d_video.py --session <session_dir> --episode N`: video of an episode with
   the camera views and the 3D gripper-tip paths.
+- `uv run python scripts/tools/compare_gripper_views.py --robot_video <robot.MP4> --trumi_video <trumi.MP4>`:
+  compare gripper-calibration videos from the robot's wrist camera and the TRumi (finger-tag positions at
+  matched openings, the Robotiq arc, overlays with the UMI-style and finger masks).
 - `uv run python scripts/tools/episode_report.py --session <session_dir>`: where the gripper closed (grasp) and
   opened (release) in each episode, in the marker frame (and robot base frame with `--calibration`), plus the
   spread across episodes.
