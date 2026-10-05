@@ -7,7 +7,10 @@ with UR's own kinematics. They are already slowed down to the pre-flight speed c
 Safety:
   * Dry run by default: nothing moves without --execute. A dry run exercises the whole loop on a simulated robot.
   * Refuses trajectories that did not pass pre-flight (unless --force).
-  * Asks you to type "yes" before moving to the start pose (slow moveJ) and again before running the trajectory.
+  * Asks you to type "yes" before moving to the start pose (slow moveJ) and again before running the trajectory
+    (--yes skips the prompts when the operator has confirmed some other way, e.g. in chat right before the run).
+  * The move to the start pose is a straight line in joint space; it is checked for collisions in the digital twin
+    (tables, belt, rails, box, self) and refused if anything is hit. --move_to_start_only stops after that move.
   * Ctrl+C or a protective stop stops the robot (servoStop / stopScript). Keep the e-stop in reach regardless.
   * First run on hardware: use an "in the air" trajectory (preflight.py --z_offset_mm 50) with --no_gripper.
 
@@ -98,8 +101,32 @@ class FakeRobot:
         return False
 
 
-def confirm(msg):
+def confirm(msg, yes=False):
+    if yes:
+        print(f"{msg} -> confirmed by the operator beforehand (--yes)")
+        return True
     return input(f"{msg} Type 'yes' to continue: ").strip().lower() == "yes"
+
+
+def start_move_collisions(tr, q_from, q_to, n=60):
+    """Collisions in the digital twin along the straight joint-space move q_from -> q_to (what moveJ does)."""
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "sim"))
+    from plan_cell import Planner
+    from playback_touches import calibrated_placement
+
+    repo = pathlib.Path(__file__).resolve().parents[2]
+    cell = json.load(open(repo / "data" / "sim" / "cell.json"))
+    calib = json.load(open(repo / "data" / "robot" / "marker_in_robot_base.json"))
+    yaw, _, _, Twm = calibrated_placement(cell, np.array(calib["T_base_marker"]))
+    cell["marker"]["centre"] = Twm[:3, 3].tolist()
+    cell["marker"]["yaw_deg"] = float(np.degrees(np.arctan2(Twm[1, 0], Twm[0, 0])))
+    pl = Planner(cell, controller_yaw_deg=yaw, tcp_z_mm=tr["tcp_z_mm"])
+    hits = set()
+    for s in np.linspace(0, 1, n):
+        hits.update(pl.contacts(q_from + s * (q_to - q_from)))
+    return sorted(hits)
 
 
 def main(a):
@@ -135,16 +162,25 @@ def main(a):
         gripper = RobotiqSocket(a.robot_ip)
 
     q_now = np.array(state.getActualQ())
-    print(f"current joints (deg): {np.degrees(q_now).round(1).tolist()} | largest joint move to start: "
-          f"{np.degrees(np.abs(Q[0] - q_now)).max():.0f} deg")
+    move = np.degrees(np.abs(Q[0] - q_now)).max()
+    print(f"current joints (deg): {np.degrees(q_now).round(1).tolist()} | largest joint move to start: {move:.0f} deg")
+    if move > 1.0:
+        hits = start_move_collisions(tr, q_now, Q[0])
+        print("twin check of the move to the start pose: " + ("no collisions" if not hits else f"COLLISIONS with {', '.join(hits)}"))
+        if hits and a.execute:
+            raise SystemExit("refusing the move to the start pose; bring the robot closer to the start pose by hand (freedrive) first")
     log = {"t": [], "q_cmd": [], "q_act": [], "tcp_act": []}
     try:
-        if a.execute and not confirm("Move SLOWLY to the start pose (clear the workspace, e-stop in hand)?"):
-            raise SystemExit("cancelled")
-        rc.moveJ(Q[0].tolist(), MOVE_TO_START_SPEED, MOVE_TO_START_ACC)
+        if move > 1.0:
+            if a.execute and not confirm("Move SLOWLY to the start pose (clear the workspace, e-stop in hand)?", a.yes):
+                raise SystemExit("cancelled")
+            rc.moveJ(Q[0].tolist(), MOVE_TO_START_SPEED, MOVE_TO_START_ACC)
+        if a.move_to_start_only:
+            print("at the start pose (--move_to_start_only): stopping here")
+            return
         if gripper:
             gripper.set(grip[0])
-        if a.execute and not confirm(f"Run the trajectory ({t[-1]:.0f} s)?"):
+        if a.execute and not confirm(f"Run the trajectory ({t[-1]:.0f} s)?", a.yes):
             raise SystemExit("cancelled")
         dt = 1.0 / SERVO_HZ
         last_grip, last_grip_t = grip[0], 0.0
@@ -201,4 +237,6 @@ if __name__ == "__main__":
     ap.add_argument("--lookahead", type=float, default=0.1, help="servoJ lookahead time (s)")
     ap.add_argument("--gain", type=float, default=300, help="servoJ gain")
     ap.add_argument("--force", action="store_true", help="allow trajectories that did not pass pre-flight")
+    ap.add_argument("--yes", action="store_true", help="skip the typed confirmations (operator confirmed beforehand)")
+    ap.add_argument("--move_to_start_only", action="store_true", help="only move to the start pose, then stop")
     main(ap.parse_args())
