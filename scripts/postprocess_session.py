@@ -105,6 +105,18 @@ def regenerate_plan(s, cfg, log):
 def stage_glitches(s, cfg, st, log):
     g = cfg["glitches"]
     excluded = st.setdefault("glitch_excluded", [])
+    # episodes excluded by hand in the config, with a reason (e.g. found while reviewing the retargeted episodes)
+    manual = []
+    for video, reason in cfg.get("exclude", {}).items():
+        for d in (s / "demos").glob(f"demo_*_{video}"):
+            f = d / "check_result.txt"
+            if not f.exists() or not f.read_text().startswith("false"):
+                f.write_text(f"false (post-process config: {reason})\n")
+                manual.append({"video": video, "reason": reason})
+    if manual:
+        excluded += manual
+        print("  excluded by the config: " + "; ".join(f"{m['video']} ({m['reason']})" for m in manual))
+        regenerate_plan(s, cfg, log)
     for _ in range(2):
         plan = pickle.load(open(s / "dataset_plan.pkl", "rb"))
         bad = []
@@ -180,7 +192,7 @@ def stage_report(s, cfg, st, log):
     if "marker_frame_matches_reference" in st:
         lines.append(f"- marker frame identical to {cfg['map_from_session']}: {st['marker_frame_matches_reference']}")
     for b in st.get("glitch_excluded", []):
-        lines.append(f"- excluded (SLAM glitch): {b['video']}: {b['reason']}")
+        lines.append(f"- excluded: {b['video']}: {b['reason']}")
     if st.get("retarget"):
         rows, r = st["retarget"], cfg["retarget"]
         lines += ["", "## Retargeting (twin pre-flight, no video)",

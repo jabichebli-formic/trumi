@@ -50,12 +50,19 @@ Stages can be run one at a time: `--stages pipeline glitches retarget export rep
   (`glitches` in the config). Writes `check_result.txt` ("false ...") in the demo folder and regenerates the plan.
   *(2 excluded: ep_27 drifted 6.7 m, ep_31 jumped 90 cm.)*
 - Short spikes (a few frames) are not excluded; smoothing (B3b) handles them.
+- **Manual exclusions** found while reviewing go in the config's `"exclude"` (video name -> reason), so every rebuild
+  applies them *(ep_4.MP4: the return passes near a shoulder singularity, 0.47 s above 180 deg/s)*.
 
 ### B3. `retarget`: per episode, TRumi fingertip -> robot joints (`scripts/sim/preflight.py`)
 a. **Jump clean-up**: single steps > 2.5 cm are interpolated; the fingertip is kept >= 5 mm above the table.
 b. **Smoothing** (`smooth_s`, 0.15 s Savitzky-Golay, 2nd order) on position and orientation. Removes frame-to-frame
    tracking jitter, which otherwise shows up as one-frame joint-speed spikes. *Path change: ~0.5 mm typical, < 1 mm at
    grasp and release, 8-15 mm only at the spikes; peak joint speeds 143-384 -> 87-226 deg/s.*
+   How it works: at every sample a parabola is fitted through the surrounding 0.15 s (9 samples at 60 Hz) and its
+   value is kept; unlike a moving average this keeps real fast motion. Wider windows were tried on all 38 episodes:
+   0.20 s / 0.25 s left 2 episodes briefly above 180 deg/s (vs 3) but doubled the change at the grasp (median 0.7 ->
+   1.3 / 1.6 mm): the remaining fast moments are real quick wrist twists (~0.1 s at 200-226 deg/s), so 0.15 s stays
+   and the robot-side speed limiter handles them.
 c. **Touch-test correction** (`correction_mm`, marker frame) *(-12.3, +0.3, -8.5 mm)*.
 d. **Gripper axes**: TRumi fingertip frame -> Robotiq TCP frame (fixed rotation `TRUMI_TO_ROBOTIQ`).
 e. **Marker -> robot base** with the robot calibration (A3).

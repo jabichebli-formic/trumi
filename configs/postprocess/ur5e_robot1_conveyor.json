@@ -2,15 +2,33 @@
  "description": "Conveyor cup pick, recorded 2026-10-02 with one TRumi; deploy on UR5e robot 1 (192.168.10.204) with the printed fingertips + wrist GoPro mount",
  "map_from_session": "data/2026-10-02_real_conveyor_setup",
  "mcap": false,
- "glitches": {"max_jump_speed_m_s": 3.0, "max_jumps": 10, "max_dist_from_marker_m": 0.9},
+ "glitches": {
+  "max_jump_speed_m_s": 3.0,
+  "max_jumps": 10,
+  "max_dist_from_marker_m": 0.9
+ },
+ "exclude": {
+  "ep_4.MP4": "the return after the drop passes near a shoulder singularity: 0.47 s above 180 deg/s, up to 497 deg/s"
+ },
  "retarget": {
   "out_subdir": "retarget_ur5e_robot1",
   "calibration": "data/robot/marker_in_robot_base.json",
   "cell": "data/sim/cell.json",
   "tcp_z_mm": 257.2,
   "gripper_tables": "data/robot/gripper_sweep_20261005_132055_tables.json",
-  "correction_mm": [-12.3, 0.3, -8.5],
-  "reference_q_deg": [-100, -115, 130, -128, -57, -57],
+  "correction_mm": [
+   -12.3,
+   0.3,
+   -8.5
+  ],
+  "reference_q_deg": [
+   -100,
+   -115,
+   130,
+   -128,
+   -57,
+   -57
+  ],
   "smooth_s": 0.15,
   "max_over_180_s": 0.1,
   "workers": 6
@@ -22,6 +40,8 @@
   "task": "pick the cup from the conveyor and place it in the box",
   "robot_type": "ur5e_robotiq_2f85",
   "mask": "data/robot/policy_mask_2704x2028.png",
-  "fps": 30, "width": 640, "height": 480
+  "fps": 30,
+  "width": 640,
+  "height": 480
  }
 }
