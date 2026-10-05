@@ -111,19 +111,46 @@ def main(a):
     starts = pl.solutions(p_w[0], R_w[0].as_matrix())
     if not starts:
         raise SystemExit("no collision-free robot configuration reaches the episode's first pose")
-    qs, e_pos, e_rot, hits = [starts[0]], [], [], []
-    for i in range(len(t)):
-        pl.m.site_pos[pl.site][2] = tcp_site_z(i)
-        q, ep_, er_ = solve_ik(pl.m, pl.d, pl.site, p_w[i], R_w[i].as_matrix(), qs[-1])
-        qs.append(q)
-        e_pos.append(ep_)
-        e_rot.append(er_)
-        hits.append(pl.contacts(q))
-    qs = np.array(qs[1:])
-    e_pos, e_rot = np.array(e_pos), np.array(e_rot)
+    lim = np.degrees(pl.m.jnt_range[:6])
+
+    def follow(q_start):
+        """IK through the whole episode starting from one arm configuration."""
+        qs, e_pos, e_rot, hits = [q_start], [], [], []
+        for i in range(len(t)):
+            pl.m.site_pos[pl.site][2] = tcp_site_z(i)
+            q, ep_, er_ = solve_ik(pl.m, pl.d, pl.site, p_w[i], R_w[i].as_matrix(), qs[-1])
+            qs.append(q)
+            e_pos.append(ep_)
+            e_rot.append(er_)
+            hits.append(pl.contacts(q))
+        qs = np.array(qs[1:])
+        n_lim = int(((np.degrees(qs) < lim[:, 0] + 5) | (np.degrees(qs) > lim[:, 1] - 5)).any(1).sum())
+        return (sum(map(bool, hits)), n_lim, max(e_pos)), (qs, np.array(e_pos), np.array(e_rot), hits)
+
+    # the first configuration found is not always the sensible one (e.g. elbow-down into the table): follow the episode
+    # from each candidate start and keep the one with the fewest contact frames, then fewest frames near a joint limit
+    # with --reference_q_deg (e.g. for a joint-space dataset, where every episode must use the same arm configuration
+    # and the same joint winding), also start from the IK solution nearest that reference, and keep the candidate
+    # closest to it among those with no more than ~0.5 s of extra contact frames
+    candidates = list(starts[:a.max_starts])
+    if a.reference_q_deg is not None:
+        q_ref = np.radians(a.reference_q_deg)
+        q_near, _, _ = solve_ik(pl.m, pl.d, pl.site, p_w[0], R_w[0].as_matrix(), q_ref)
+        candidates.insert(0, q_near)
+    tried = [follow(q0) for q0 in candidates]
+    if a.reference_q_deg is not None:
+        fewest = min(c[0][0] for c in tried)
+        ok = [k for k in range(len(tried)) if tried[k][0][0] <= fewest + 30 and tried[k][0][2] < 0.002]
+        best = min(ok or range(len(tried)), key=lambda k: np.linalg.norm(np.degrees(tried[k][1][0][0]) - a.reference_q_deg))
+    else:
+        best = min(range(len(tried)), key=lambda k: tried[k][0])
+    qs, e_pos, e_rot, hits = tried[best][1]
+    if len(tried) > 1:
+        notes.append(f"arm configuration: tried {len(tried)} starting configurations, kept #{best + 1} "
+                     f"(contact frames per candidate: {[c[0][0] for c in tried]})"
+                     + (f"; start is {np.linalg.norm(np.degrees(qs[0]) - a.reference_q_deg):.0f} deg from the reference" if a.reference_q_deg is not None else ""))
     speed = np.degrees(np.abs(np.diff(qs, axis=0)) / np.diff(t)[:, None])
     slow = max(1.0, speed.max() / a.speed_cap_deg_s)
-    lim = np.degrees(pl.m.jnt_range[:6])
     near_lim = (np.degrees(qs) < lim[:, 0] + 5) | (np.degrees(qs) > lim[:, 1] - 5)
     collisions = {}
     for i, h in enumerate(hits):
@@ -230,6 +257,9 @@ if __name__ == "__main__":
     ap.add_argument("--z_offset_mm", type=float, default=0.0, help="lift the whole path by this much (in-the-air rehearsal)")
     ap.add_argument("--correction_mm", type=float, nargs=3, default=[0.0, 0.0, 0.0],
                     help="add this to every TRumi position (marker frame x y z, mm), e.g. minus a touch test's average offset")
+    ap.add_argument("--reference_q_deg", type=float, nargs=6, default=None,
+                    help="prefer the arm configuration closest to these joint angles (consistent joints across episodes)")
+    ap.add_argument("--max_starts", type=int, default=4, help="arm configurations to try for the first pose")
     ap.add_argument("--out_subdir", default="preflight", help="output folder inside the session")
     ap.add_argument("--gripper_tables", type=pathlib.Path, default=None,
                     help="measured width->command table and fingertip arc (scripts/tools/gripper_sweep_table.py output)")
