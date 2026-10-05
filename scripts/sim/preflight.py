@@ -29,7 +29,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from plan_cell import Planner  # noqa: E402
+from plan_cell import SIM_TCP_Z_MM, Planner  # noqa: E402
 from replay_ur5e import (  # noqa: E402
     OPENING_CTRL, OPENING_M, SLAM_STRIDE, TRUMI_TO_ROBOTIQ, clean_trajectory, read_video_frames, solve_ik)
 from view_twin import REPO  # noqa: E402
@@ -96,14 +96,24 @@ def main(a):
     p_w = p_ctrl @ T_world_ctrl[:3, :3].T + T_world_ctrl[:3, 3]
     R_w = R.from_matrix(T_world_ctrl[:3, :3]) * R_ctrl
     grip = np.interp(np.clip(width, OPENING_M[0], OPENING_M[-1]), OPENING_M, OPENING_CTRL)
+    setback = np.zeros(len(t))  # mm the real fingertips sit back from the closed TCP (Robotiq arc), per step
+    if a.gripper_tables:  # measured on the real gripper (scripts/tools/gripper_sweep_table.py)
+        gt = json.load(open(a.gripper_tables))
+        grip = np.interp(width, gt["width_to_cmd"]["trumi_width_m"], gt["width_to_cmd"]["robotiq_cmd"])
+        setback = np.interp(grip, gt["arc"]["robotiq_pos"], gt["arc"]["fingertip_setback_mm"])
+        notes.append(f"gripper: measured width->command table and arc from {a.gripper_tables} "
+                     f"(fingertip set-back {setback.min():.1f}-{setback.max():.1f} mm compensated)")
 
     # --- IK through the trajectory, starting from the best collision-free configuration
     pl = Planner(cell, controller_yaw_deg=ctrl_yaw, tcp_z_mm=a.tcp_z_mm)
+    tcp_site_z = lambda i: 0.145 + ((a.tcp_z_mm or SIM_TCP_Z_MM) - setback[i] - SIM_TCP_Z_MM) / 1000
+    pl.m.site_pos[pl.site][2] = tcp_site_z(0)  # IK target = where the real fingertips are at this opening
     starts = pl.solutions(p_w[0], R_w[0].as_matrix())
     if not starts:
         raise SystemExit("no collision-free robot configuration reaches the episode's first pose")
     qs, e_pos, e_rot, hits = [starts[0]], [], [], []
     for i in range(len(t)):
+        pl.m.site_pos[pl.site][2] = tcp_site_z(i)
         q, ep_, er_ = solve_ik(pl.m, pl.d, pl.site, p_w[i], R_w[i].as_matrix(), qs[-1])
         qs.append(q)
         e_pos.append(ep_)
@@ -120,7 +130,7 @@ def main(a):
         for name in h:
             collisions.setdefault(name, []).append(t[i])
 
-    out = session / "preflight"
+    out = session / a.out_subdir
     out.mkdir(exist_ok=True)
     stem = f"ep{a.episode}_{a.arm}" + (f"_air{a.z_offset_mm:.0f}mm" if a.z_offset_mm else "")
     ok = e_pos.max() < 0.002 and e_rot.max() < 1.0 and not near_lim.any() and not collisions
@@ -143,7 +153,11 @@ def main(a):
             "session": str(session), "episode": a.episode, "arm": a.arm, "calibration": calib_src,
             "speed_cap_deg_s": a.speed_cap_deg_s, "slowdown": slow, "tcp_z_mm": a.tcp_z_mm or 155.8,
             "t_s": (t * slow).round(4).tolist(), "q_rad": qs.round(6).tolist(),
-            "tcp_pose_ctrl": [list(p) + list(r) for p, r in zip(p_ctrl.round(5), R_ctrl.as_rotvec().round(5))],
+            # pose of the pendant TCP (closed fingertip ends): the real fingertips plus the arc set-back along the tool axis
+            "tcp_pose_ctrl": [list(p) + list(r) for p, r in zip((p_ctrl + setback[:, None] / 1000 * R_ctrl.as_matrix()[:, :, 2]).round(5),
+                                                                R_ctrl.as_rotvec().round(5))],
+            "fingertip_target_ctrl": p_ctrl.round(5).tolist(), "fingertip_setback_mm": setback.round(2).tolist(),
+            "gripper_tables": str(a.gripper_tables) if a.gripper_tables else None,
             "gripper_0open_255closed": grip.round(1).tolist(), "preflight_pass": bool(ok), "z_offset_mm": a.z_offset_mm,
             "correction_mm": a.correction_mm, "box_checked": not a.no_box}
     json.dump(traj, open(out / f"{stem}_robot_trajectory.json", "w"))
@@ -216,6 +230,9 @@ if __name__ == "__main__":
     ap.add_argument("--z_offset_mm", type=float, default=0.0, help="lift the whole path by this much (in-the-air rehearsal)")
     ap.add_argument("--correction_mm", type=float, nargs=3, default=[0.0, 0.0, 0.0],
                     help="add this to every TRumi position (marker frame x y z, mm), e.g. minus a touch test's average offset")
+    ap.add_argument("--out_subdir", default="preflight", help="output folder inside the session")
+    ap.add_argument("--gripper_tables", type=pathlib.Path, default=None,
+                    help="measured width->command table and fingertip arc (scripts/tools/gripper_sweep_table.py output)")
     ap.add_argument("--no_box", action="store_true", help="leave the box out of the collision check (position unknown)")
     ap.add_argument("--no_video", action="store_true", help="skip the GoPro panel (e.g. for synthetic test episodes)")
     main(ap.parse_args())

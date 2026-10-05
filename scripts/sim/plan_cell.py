@@ -59,7 +59,7 @@ def add_obstacles(spec, cell):
 
     def box(name, centre, half, yaw_deg, rgba=OBSTACLE_RGBA, collide=True):
         wb.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_BOX, size=list(half), pos=list(centre), quat=quat_z(yaw_deg),
-                    rgba=rgba, contype=1 if collide else 0, conaffinity=1 if collide else 0, margin=CLEARANCE, group=1)
+                    rgba=rgba, contype=1 if collide else 0, conaffinity=3 if collide else 0, margin=CLEARANCE, group=1)
         names[name] = True
 
     mt = cell["main_table"]
@@ -108,6 +108,20 @@ def add_obstacles(spec, cell):
 
 
 SIM_TCP_Z_MM = 155.8  # Robotiq 2F-85 'pinch' point in the Menagerie model, measured from the UR tool flange
+STOCK_TIP_MM = 173.5  # closed stock fingertip ends in the model, from the flange
+
+
+def add_finger_extensions(spec, length_m):
+    """Approximate longer (e.g. 3D-printed) fingertips: a pad-sized block on each pad, reaching length_m past the stock
+    tip. They collide with the cell's obstacles (bit 2) but not with the robot or each other (printed tips touch when
+    closed). Shape is approximate: the real fingers are wider near their base."""
+    for side in ("left", "right"):
+        pad = spec.geom(f"g_{side}_pad1")
+        half = np.array(pad.size)
+        spec.body(f"g_{side}_pad").add_geom(
+            name=f"g_{side}_tip_extension", type=mujoco.mjtGeom.mjGEOM_BOX, size=[half[0], half[1], length_m / 2],
+            pos=(np.array(pad.pos) + [0, 0, half[2] + length_m / 2]).tolist(), contype=2, conaffinity=0,
+            rgba=[0.15, 0.15, 0.15, 1])
 
 
 class Planner:
@@ -115,6 +129,8 @@ class Planner:
         spec, self.base, _ = twin_spec(show_scanned_robot=False, controller_yaw_deg=controller_yaw_deg)
         if tcp_z_mm is not None:  # match the real robot's TCP (fingertip) offset from the flange
             spec.site("g_pinch").pos = [0.0, 0.0, 0.145 + (tcp_z_mm - SIM_TCP_Z_MM) / 1000]
+            if tcp_z_mm > STOCK_TIP_MM + 5:  # longer fingertips than stock
+                add_finger_extensions(spec, (tcp_z_mm - STOCK_TIP_MM) / 1000)
         self.obstacle_names = add_obstacles(spec, cell)
         self.m = spec.compile()
         self.d = mujoco.MjData(self.m)
