@@ -40,14 +40,21 @@ MAX_JOINT_SPEED_DEG_S = 90  # hard cap for --execute (UR5e max is 180 deg/s)
 class RobotiqSocket:
     """Minimal client for the Robotiq URCap gripper socket (port 63352)."""
 
-    def __init__(self, ip):
+    def __init__(self, ip, speed=255, force=100):
         self.s = socket.create_connection((ip, 63352), timeout=2.0)
-        for cmd in ("SET ACT 1", "SET GTO 1", "SET SPE 255", "SET FOR 100"):
+        # activating from here would make the gripper open and close fully; do it from the pendant instead
+        if self.get("ACT") != 1 or self.get("STA") != 3:
+            raise RuntimeError("gripper is not activated: activate it from the pendant (Robotiq toolbar) first")
+        for cmd in (f"SET SPE {int(speed)}", f"SET FOR {int(force)}", "SET GTO 1"):
             self._send(cmd)
 
     def _send(self, cmd):
         self.s.sendall((cmd + "\n").encode())
         return self.s.recv(1024).decode().strip()
+
+    def get(self, var):
+        """Read one gripper register (e.g. POS, OBJ, FLT); replies look like 'POS 3'."""
+        return int(self._send(f"GET {var}").split()[-1])
 
     def set(self, pos_0_255):
         self._send(f"SET POS {int(np.clip(pos_0_255, 0, 255))}")

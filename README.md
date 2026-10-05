@@ -294,6 +294,9 @@ the session directory; steps 06 and 07 apply it.
 
 - `scripts/robot/calibrate_marker.py --robot_ip <IP>`: measure the marker's pose in the robot base frame by
   touching its centre and 4 corners in freedrive (read-only; `--manual` to type pendant values, `--self_test`).
+- `scripts/robot/gripper_sweep.py --robot_ip <IP> [--execute]`: step the Robotiq open -> closed -> open with holds
+  (gripper only) while the wrist GoPro records; then `uv run python scripts/tools/gripper_sweep_table.py --video
+  <sweep.MP4> --sweep_json <log>` gives the TRumi-width -> Robotiq-command table and the fingertip arc.
 - `scripts/robot/replay_on_robot.py --trajectory <file> [--robot_ip <IP> --execute]`: replay a pre-flighted
   trajectory in joint space; dry run by default, confirmations before moving, speed caps, logs actual vs plan.
 

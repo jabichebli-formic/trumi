@@ -37,8 +37,9 @@ CALIB = REPO / "example" / "calibration"
 Z_OK = (0.064, 0.080)  # depth window the pipeline accepts for finger tags (cv_util.get_gripper_width)
 
 
-def detect(video, stride):
-    """Per sampled frame: time, frame (BGR), and {tag id: (tvec, pixel centre)} for the finger tags 0 and 1."""
+def detect(video, stride, keep_images=True):
+    """Per sampled frame: time, frame (BGR, or None if keep_images is False), and {tag id: (tvec, pixel centre)} for
+    the finger tags 0 and 1."""
     cfg = parse_aruco_config(yaml.safe_load((CALIB / "aruco_config.yaml").read_text()))
     intr = parse_fisheye_intrinsics(json.loads((CALIB / "gopro13_intrinsics_2_7k.json").read_text()))
     rows = []
@@ -52,7 +53,7 @@ def detect(video, stride):
             img = fr.to_ndarray(format="bgr24")
             tags = detect_localize_aruco_tags(draw_predefined_mask(img.copy(), color=(0, 0, 0), mirror=True, gripper=False, finger=False),
                                               cfg["aruco_dict"], cfg["marker_size_map"], fi, refine_subpix=True)
-            rows.append((float(fr.pts * s.time_base), img, {k: (v["tvec"], v["corners"].mean(0)) for k, v in tags.items() if k in (0, 1)}))
+            rows.append((float(fr.pts * s.time_base), img if keep_images else None, {k: (v["tvec"], v["corners"].mean(0)) for k, v in tags.items() if k in (0, 1)}))
     return rows
 
 
