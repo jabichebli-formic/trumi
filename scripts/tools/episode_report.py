@@ -35,6 +35,13 @@ def events(w):
     return g, (g + opened[0] if len(opened) else None)
 
 
+def path_checks(t, p, max_speed=3.0):
+    """(frames moving faster than max_speed m/s, farthest distance from the marker in the plane (m)) for a fingertip path.
+    Large values mean SLAM tracking went wrong even though the pipeline kept the episode."""
+    v = np.linalg.norm(np.diff(p, axis=0), axis=1) / np.diff(t)
+    return int((v > max_speed).sum()), float(np.linalg.norm(p[:, :2], axis=1).max())
+
+
 def main(a):
     plan = pickle.load(open(a.session / "dataset_plan.pkl", "rb"))
     off = np.array(a.offset_mm) / 1000
@@ -49,8 +56,7 @@ def main(a):
         p = np.asarray(ep["grippers"][0]["tcp_pose"], float)[:, :3] + off
         g, r = events(np.asarray(ep["grippers"][0]["gripper_width"], float))
         fmt = lambda k: " ".join(f"{v*100:6.1f}" for v in p[k]) if k is not None else f"{'none':>20s}"
-        v = np.linalg.norm(np.diff(p, axis=0), axis=1) / np.diff(t)
-        n_jumps, far = int((v > 3).sum()), float(np.linalg.norm(p[:, :2], axis=1).max())
+        n_jumps, far = path_checks(t, p)
         line = f"ep{i + 1:<3d}{name[:28]:28s} {t[-1] - t[0]:4.1f}s  {fmt(g):>22s}  {fmt(r):>22s}"
         if T is not None and g is not None:
             line += "   " + " ".join(f"{v*1000:7.1f}" for v in (T @ np.r_[p[g], 1])[:3])

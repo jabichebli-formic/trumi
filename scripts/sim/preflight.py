@@ -49,6 +49,22 @@ def yaw_T(yaw_deg, t):
     return T_from(R.from_euler("z", yaw_deg, degrees=True).as_matrix(), t)
 
 
+def smooth_pose(t, pos, rot, window_s):
+    """Savitzky-Golay smoothing (2nd order) of positions and of orientation quaternions (sign-continuous, renormalised).
+    Removes frame-to-frame tracking jitter, which otherwise shows up as very short joint-speed spikes."""
+    from scipy.signal import savgol_filter
+
+    n = int(round(window_s / np.median(np.diff(t)))) | 1  # odd number of samples
+    if n < 5 or n > len(t):
+        return pos, rot
+    quat = rot.as_quat()
+    for i in range(1, len(quat)):  # q and -q are the same rotation: keep neighbours on the same side
+        if quat[i] @ quat[i - 1] < 0:
+            quat[i] = -quat[i]
+    quat = savgol_filter(quat, n, 2, axis=0)
+    return savgol_filter(pos, n, 2, axis=0), R.from_quat(quat / np.linalg.norm(quat, axis=1, keepdims=True))
+
+
 def main(a):
     session = a.session.resolve()
     cell = json.load(open(a.cell))
@@ -88,6 +104,9 @@ def main(a):
     pose = np.asarray(ep["grippers"][g]["tcp_pose"], float)
     width = np.asarray(ep["grippers"][g]["gripper_width"], float)
     pos, rot, n_jumps, n_floor = clean_trajectory(t, pose[:, :3], R.from_rotvec(pose[:, 3:]))
+    if a.smooth_s > 0:
+        pos, rot = smooth_pose(t, pos, rot, a.smooth_s)
+        notes.append(f"smoothing: Savitzky-Golay over {a.smooth_s:.2f} s on fingertip position and orientation")
     rot_r = rot * R.from_matrix(TRUMI_TO_ROBOTIQ)
     pos = pos + np.array(a.correction_mm) / 1000  # systematic TRumi offset measured by a touch test (marker frame)
     pos = pos + [0, 0, a.z_offset_mm / 1000]  # "in the air" rehearsal: lift the whole path (marker frame z = up)
@@ -151,6 +170,7 @@ def main(a):
                      + (f"; start is {np.linalg.norm(np.degrees(qs[0]) - a.reference_q_deg):.0f} deg from the reference" if a.reference_q_deg is not None else ""))
     speed = np.degrees(np.abs(np.diff(qs, axis=0)) / np.diff(t)[:, None])
     slow = max(1.0, speed.max() / a.speed_cap_deg_s)
+    over_limit_s = float(np.sum(np.diff(t)[speed.max(1) > 180]))
     near_lim = (np.degrees(qs) < lim[:, 0] + 5) | (np.degrees(qs) > lim[:, 1] - 5)
     collisions = {}
     for i, h in enumerate(hits):
@@ -166,6 +186,7 @@ def main(a):
            f"trajectory: {len(t)} steps, {t[-1]:.1f} s; glitch jumps smoothed: {n_jumps}; floor clamps: {n_floor}",
            f"IK: position error max {e_pos.max()*1000:.1f} mm, rotation error max {e_rot.max():.2f} deg",
            f"joint limits: {'OK' if not near_lim.any() else f'{near_lim.any(1).sum()} frames within 5 deg of a limit'}",
+           f"joint speed: above the UR5e's 180 deg/s for {over_limit_s:.2f} s in total (max {speed.max():.0f} deg/s)",
            f"joint speed: max {speed.max():.0f} deg/s at recorded speed -> replay {slow:.1f}x slower "
            f"({t[-1]*slow:.0f} s) to stay under {a.speed_cap_deg_s:.0f} deg/s",
            "collisions: " + ("none" if not collisions else
@@ -178,7 +199,8 @@ def main(a):
 
     traj = {"description": "joint-space trajectory for the real UR5e (UR controller base frame); times already slowed down",
             "session": str(session), "episode": a.episode, "arm": a.arm, "calibration": calib_src,
-            "speed_cap_deg_s": a.speed_cap_deg_s, "slowdown": slow, "tcp_z_mm": a.tcp_z_mm or 155.8,
+            "speed_cap_deg_s": a.speed_cap_deg_s, "slowdown": slow, "time_over_180_deg_s": over_limit_s,
+            "smooth_s": a.smooth_s, "tcp_z_mm": a.tcp_z_mm or 155.8,
             "t_s": (t * slow).round(4).tolist(), "q_rad": qs.round(6).tolist(),
             # pose of the pendant TCP (closed fingertip ends): the real fingertips plus the arc set-back along the tool axis
             "tcp_pose_ctrl": [list(p) + list(r) for p, r in zip((p_ctrl + setback[:, None] / 1000 * R_ctrl.as_matrix()[:, :, 2]).round(5),
@@ -257,6 +279,7 @@ if __name__ == "__main__":
     ap.add_argument("--z_offset_mm", type=float, default=0.0, help="lift the whole path by this much (in-the-air rehearsal)")
     ap.add_argument("--correction_mm", type=float, nargs=3, default=[0.0, 0.0, 0.0],
                     help="add this to every TRumi position (marker frame x y z, mm), e.g. minus a touch test's average offset")
+    ap.add_argument("--smooth_s", type=float, default=0.0, help="smooth the fingertip path over this window (s), e.g. 0.15")
     ap.add_argument("--reference_q_deg", type=float, nargs=6, default=None,
                     help="prefer the arm configuration closest to these joint angles (consistent joints across episodes)")
     ap.add_argument("--max_starts", type=int, default=4, help="arm configurations to try for the first pose")

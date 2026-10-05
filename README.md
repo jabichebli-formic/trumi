@@ -253,6 +253,11 @@ Both formats store per-step end-effector pose (position + axis-angle rotation), 
 
 Helpers added in this fork. Run from the repository root; recordings and outputs are kept in `data/` (not versioned).
 
+**Post-processing for robot training**: `uv run python scripts/postprocess_session.py --session data/<session> --config
+configs/postprocess/<name>.json` runs every step from TRumi videos to a LeRobot v3.0 dataset in the robot's joint
+space (pipeline, glitch exclusion, smoothing, calibration, arc-compensated IK, export). Each step and the one-time
+setup it relies on are documented in `docs/POST_PROCESSING.md`.
+
 **Session quality checks** (`scripts/tools/`, TRumi environment):
 
 - `bash scripts/tools/test_mappings.sh <out_dir> <mapping videos...>`: build a SLAM map from each mapping take
