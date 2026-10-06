@@ -19,7 +19,7 @@ Modes:
   --robot_ip IP --execute         moves the robot. Check list: e-stop in hand, nobody within reach, Remote mode,
                                   pendant TCP = --tcp_z_mm, gripper activated.
 Safety (execute): joint-speed limit (--max_joint_speed_deg_s, default 60), a chunk is refused if its first target is
-more than --max_jump_deg from the robot or any target puts the fingertip below --min_height_mm above the marker plane
+more than --max_jump_deg (per joint) from the robot or any target puts the fingertip below --min_height_mm above the marker plane
 (robot calibration) or outside the UR joint limits; --max_seconds; Ctrl+C stops (servoStop).
 
 Usage (from ~/trumi, LeRobot 0.6 environment, e.g. ~/YAM/yam-lerobot/.venv/bin/python):
@@ -235,9 +235,10 @@ def check_chunk(chunk, q_now, a, T_marker_inv, i_now=0):
     """Reasons to refuse a chunk (empty list = fine). i_now: index of the action due right now."""
     problems = []
     i_now = int(np.clip(i_now, 0, len(chunk) - 1))
-    jump = np.degrees(np.abs(chunk[i_now, :6] - q_now)).max()
-    if jump > a.max_jump_deg:
-        problems.append(f"target due now is {jump:.0f} deg from the robot (> {a.max_jump_deg})")
+    jump = np.degrees(np.abs(chunk[i_now, :6] - q_now))
+    limit = np.broadcast_to(np.array(a.max_jump_deg, float), (6,))  # one value for all joints, or one per joint
+    for j in np.flatnonzero(jump > limit):
+        problems.append(f"target due now is {jump[j]:.0f} deg from the robot on joint {j} (> {limit[j]:.0f})")
     if i_now >= len(chunk) - 5:
         problems.append(f"chunk already over when it arrived (action {i_now} of {len(chunk)} due): latency too large")
     if np.abs(chunk[:, :6]).max() > 2 * np.pi - 0.05:
@@ -575,7 +576,10 @@ if __name__ == "__main__":
                     help="real-time chunking: steer each new chunk to continue the first N actions of the old one "
                          "(0 = off; e.g. 25 with --replan_s 0.5)")
     ap.add_argument("--max_joint_speed_deg_s", type=float, default=60)
-    ap.add_argument("--max_jump_deg", type=float, default=20)
+    ap.add_argument("--max_jump_deg", type=float, nargs="+", default=[57, 44, 23, 49, 24, 56],
+                    help="refuse a chunk whose target due now is further than this from the robot: one value, or one per "
+                         "joint (base .. wrist roll). Default: 1.2 x the 99th percentile of each joint's change over 0.5 s "
+                         "(one replan) in the human demos (trumi_conveyor_pick_v1, 38 episodes)")
     ap.add_argument("--min_height_mm", type=float, default=0, help="fingertip never below this height above the marker plane")
     ap.add_argument("--tcp_z_mm", type=float, default=257.2)
     ap.add_argument("--calibration", type=pathlib.Path, default=REPO / "data" / "robot" / "marker_in_robot_base.json")
@@ -583,6 +587,8 @@ if __name__ == "__main__":
                     help="must match the dataset the checkpoint was trained on (fingers-visible: policy_mask_gripper_only_2704x2028.png)")
     a = ap.parse_args()
     a.sync_steps = min(max(a.sync_steps, 0), 49)  # chunks have 50 actions
+    if len(a.max_jump_deg) not in (1, 6):
+        ap.error("--max_jump_deg takes one value (all joints) or six (one per joint)")
     out = REPO / "data" / "robot" / "policy_runs" / datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     if a.dataset:
         run_dataset(a)

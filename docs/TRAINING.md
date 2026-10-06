@@ -102,3 +102,11 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   and checks safety against the action due now. With 0.57 s that left ~23 of 50 actions in the past on arrival and a
   chunk was refused (24 deg from the robot). UMI's HDMI path (Media Mod + Cam Link 4K) is set to 0.17 s in their code,
   so a capture card would not be faster than the fixed USB preview.
+- **Jump check per joint** (`--max_jump_deg`, default 57 44 23 49 24 56 deg, base .. wrist roll): a new chunk is
+  refused if its target due now is further than this from the robot. Each limit is 1.2 x the 99th percentile of that
+  joint's change over 0.5 s (one replan) in the human demos. The old flat 20 deg refused legitimate re-plans on robot 1
+  (a 22 deg shoulder dive for a newly placed cup; a 38 deg wrist roll over the box at release); of 122 logged
+  hand-overs on 2026-10-06 the per-joint limits refuse none. The speed cap and crossfade still bound how fast any jump
+  is executed.
+- **First working run (2026-10-06, 111103)**: 40k v1, `--blend_s 0.35 --camera_latency_s 0.07
+  --max_joint_speed_deg_s 180`: 44.6 s, 5 grasps, 4 releases into the box before the old 20 deg check stopped it.
