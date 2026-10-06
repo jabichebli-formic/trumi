@@ -38,6 +38,7 @@ SERVO_HZ = 125
 MOVE_TO_START_SPEED = 0.3  # rad/s
 MOVE_TO_START_ACC = 0.5  # rad/s^2
 MAX_JOINT_SPEED_DEG_S = 90  # hard cap for --execute (UR5e max is 180 deg/s)
+MAX_JOINT_SPEED_RECORDED_DEG_S = 150  # cap with --recorded_speed (the demo's own timing)
 
 
 class RobotiqSocket:
@@ -77,13 +78,13 @@ class FakeRobot:
         self.q = np.array(q, float)
 
     def initPeriod(self):
-        return time.time()
+        return time.time()  # keeps real time like the robot does, so a dry run takes as long as the real run
 
     def servoJ(self, q, v, a, dt, lookahead, gain):
         self.q = np.array(q, float)
 
     def waitPeriod(self, t0):
-        pass
+        time.sleep(max(0.0, t0 + 1.0 / SERVO_HZ - time.time()))
 
     def servoStop(self):
         pass
@@ -133,7 +134,10 @@ def main(a):
     tr = json.load(open(a.trajectory))
     if not tr.get("preflight_pass") and not a.force:
         raise SystemExit("this trajectory did not pass pre-flight (see its _report.txt); use --force only if you know why")
-    t = np.array(tr["t_s"]) * a.extra_slowdown
+    if a.recorded_speed:  # the demo's own timing (what the policy is trained on)
+        t = np.array(tr["t_s"]) / tr["slowdown"] * a.extra_slowdown
+    else:
+        t = np.array(tr["t_s"]) * a.extra_slowdown
     Q = np.array(tr["q_rad"])
     grip = np.array(tr["gripper_0open_255closed"])
     qd = np.degrees(np.abs(np.diff(Q, axis=0)) / np.diff(t)[:, None])
@@ -142,8 +146,9 @@ def main(a):
     print(f"start joints (deg): {np.degrees(Q[0]).round(1).tolist()}")
     if a.execute and a.extra_slowdown < 1.0:
         raise SystemExit("--extra_slowdown below 1 would speed the robot up; not allowed with --execute")
-    if a.execute and qd.max() > MAX_JOINT_SPEED_DEG_S and not a.force:
-        raise SystemExit(f"max joint speed {qd.max():.0f} deg/s exceeds {MAX_JOINT_SPEED_DEG_S} deg/s; increase --extra_slowdown")
+    cap = MAX_JOINT_SPEED_RECORDED_DEG_S if a.recorded_speed else MAX_JOINT_SPEED_DEG_S
+    if a.execute and qd.max() > cap and not a.force:
+        raise SystemExit(f"max joint speed {qd.max():.0f} deg/s exceeds {cap} deg/s; increase --extra_slowdown")
 
     if a.execute:
         if not a.robot_ip:
@@ -152,14 +157,14 @@ def main(a):
         import rtde_receive
 
         rr = rtde_receive.RTDEReceiveInterface(a.robot_ip)
-        rc = rtde_control.RTDEControlInterface(a.robot_ip)
+        rc = rtde_control.RTDEControlInterface(a.robot_ip, frequency=SERVO_HZ)  # default would be the robot's 500 Hz
         state = rr
     else:
         print("DRY RUN (no --execute): simulating the robot; nothing will move")
         rc = state = FakeRobot(Q[0] + 0.1)
     gripper = None
     if a.execute and not a.no_gripper:
-        gripper = RobotiqSocket(a.robot_ip)
+        gripper = RobotiqSocket(a.robot_ip, speed=a.gripper_speed, force=a.gripper_force)
 
     q_now = np.array(state.getActualQ())
     move = np.degrees(np.abs(Q[0] - q_now)).max()
@@ -185,9 +190,13 @@ def main(a):
         dt = 1.0 / SERVO_HZ
         last_grip, last_grip_t = grip[0], 0.0
         t0 = time.time()
-        for k in range(int(t[-1] / dt) + 1):
+        k = -1
+        while True:
+            k += 1
             cyc = rc.initPeriod()
-            tk = k * dt
+            tk = time.time() - t0  # position on the path from the real clock, never from counting commands
+            if tk > t[-1]:
+                break
             q = np.array([np.interp(tk, t, Q[:, j]) for j in range(6)])
             rc.servoJ(q.tolist(), 0.0, 0.0, dt, a.lookahead, a.gain)
             g = float(np.interp(tk, t, grip))
@@ -203,7 +212,8 @@ def main(a):
                 print("PROTECTIVE STOP detected - stopping")
                 break
             rc.waitPeriod(cyc)
-        print(f"done in {time.time() - t0:.1f} s")
+        took = time.time() - t0
+        print(f"done in {took:.1f} s (planned {t[-1]:.1f} s)" + ("" if abs(took - t[-1]) < 0.1 * t[-1] + 0.5 else "  WARNING: timing does not match the plan"))
     except KeyboardInterrupt:
         print("\ninterrupted - stopping the robot")
     finally:
@@ -237,6 +247,9 @@ if __name__ == "__main__":
     ap.add_argument("--lookahead", type=float, default=0.1, help="servoJ lookahead time (s)")
     ap.add_argument("--gain", type=float, default=300, help="servoJ gain")
     ap.add_argument("--force", action="store_true", help="allow trajectories that did not pass pre-flight")
+    ap.add_argument("--recorded_speed", action="store_true", help="replay at the demo's own timing (cap 150 deg/s)")
+    ap.add_argument("--gripper_speed", type=int, default=255, help="Robotiq speed 0-255")
+    ap.add_argument("--gripper_force", type=int, default=50, help="Robotiq force 0-255 (gentle on a plastic cup)")
     ap.add_argument("--yes", action="store_true", help="skip the typed confirmations (operator confirmed beforehand)")
     ap.add_argument("--move_to_start_only", action="store_true", help="only move to the start pose, then stop")
     main(ap.parse_args())
