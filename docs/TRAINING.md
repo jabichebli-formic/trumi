@@ -93,3 +93,9 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   predicts is unchanged. Replaying the logged run through the controller: velocity jumps 114 -> 16 deg/s (99th pct),
   peak acceleration 14,300 -> 2,000 deg/s^2. RTC (horizon 25) was smooth live but kept closing at one spot; sync
   (`--sync_steps`) also did not work for the user.
+- **Camera latency 0.57 s** (HERO13 USB preview, `scripts/robot/camera_latency.py`: gripper opens/closes, its
+  reported position vs the finger tags in the live video; 8 moves, 537-597 ms). The policy was getting a 0.57 s old
+  image with the current joint state. `run_policy.py --camera_latency_s 0.57` (default) pairs each frame with the
+  robot state and gripper command from when it was taken (state history at 100 Hz), places the chunk on that timeline
+  (actions already in the past are skipped) and checks safety against the action due now. An HDMI capture path
+  (Media Mod + capture card) should be far faster (UMI used one) if the 0.57 s limits a moving belt.

@@ -229,12 +229,15 @@ def fingertip_height_mm(q, T_marker_inv, tcp_z):
     return float((T_marker_inv @ np.r_[tip, 1])[2] * 1000)
 
 
-def check_chunk(chunk, q_now, a, T_marker_inv):
-    """Reasons to refuse a chunk (empty list = fine)."""
+def check_chunk(chunk, q_now, a, T_marker_inv, i_now=0):
+    """Reasons to refuse a chunk (empty list = fine). i_now: index of the action due right now."""
     problems = []
-    jump = np.degrees(np.abs(chunk[0, :6] - q_now)).max()
+    i_now = int(np.clip(i_now, 0, len(chunk) - 1))
+    jump = np.degrees(np.abs(chunk[i_now, :6] - q_now)).max()
     if jump > a.max_jump_deg:
-        problems.append(f"first target {jump:.0f} deg from the robot (> {a.max_jump_deg})")
+        problems.append(f"target due now is {jump:.0f} deg from the robot (> {a.max_jump_deg})")
+    if i_now >= len(chunk) - 5:
+        problems.append(f"chunk already over when it arrived (action {i_now} of {len(chunk)} due): latency too large")
     if np.abs(chunk[:, :6]).max() > 2 * np.pi - 0.05:
         problems.append("a target is at a joint limit (+-360 deg)")
     low = min(fingertip_height_mm(q, T_marker_inv, a.tcp_z_mm / 1000) for q in chunk[:, :6])
@@ -247,8 +250,10 @@ def check_chunk(chunk, q_now, a, T_marker_inv):
 class Servo:
     """Background 125 Hz loop: follows the newest chunk by wall clock with a joint-speed limit; sends gripper commands."""
 
-    def __init__(self, rc, rr, gripper, q0, g0, max_speed_deg_s, blend_s=0.0):
+    def __init__(self, rc, rr, gripper, q0, g0, max_speed_deg_s, blend_s=0.0, gripper_delay_s=0.0):
         self.rc, self.rr, self.gripper = rc, rr, gripper
+        self.gripper_delay_s = gripper_delay_s
+        self.g_hist = [(time.time(), float(g0))]  # (time, gripper command 0-255) to look up the state at a past time
         self.blend_s, self.old, self.t_switch = blend_s, None, 0.0
         self.q_cmd, self.g_sent = np.array(q0, float), float(g0)
         self.vmax = np.radians(max_speed_deg_s)
@@ -294,10 +299,12 @@ class Servo:
                 if tgt is not None:
                     step = np.clip(tgt[:6] - self.q_cmd, -self.vmax * dt, self.vmax * dt)  # joint-speed limit
                     self.q_cmd = self.q_cmd + step
-                    g = float(np.clip(tgt[6], 0, 1)) * 255
+                    g_tgt = self._target(now - self.gripper_delay_s) if self.gripper_delay_s > 0 else tgt
+                    g = float(np.clip(g_tgt[6], 0, 1)) * 255  # gripper can lag the arm on purpose (--gripper_delay_s)
                     if self.gripper and abs(g - self.g_sent) > 10 and now - last_grip_t > 0.1:
                         self.gripper.set(g)
                         self.g_sent, last_grip_t = g, now
+                        self.g_hist.append((now, g))
                 self.rc.servoJ(self.q_cmd.tolist(), 0.0, 0.0, dt, 0.1, 300)
                 if self.rr.isProtectiveStopped():
                     self.error = "protective stop"
@@ -420,6 +427,22 @@ def run_robot(a, out):
     prep = Preprocess(a.mask)
     pol = Policy(a.checkpoint, a.device, a.compile, rtc_horizon=a.rtc_horizon)
     servo, rc, log = None, None, []
+    hist, stop_hist = [], threading.Event()  # (time, joints) at ~100 Hz: the state at the moment a frame was taken
+
+    def record_state():
+        while not stop_hist.is_set():
+            hist.append((time.time(), np.array(rr.getActualQ())))
+            if len(hist) > 1000:
+                del hist[:200]
+            time.sleep(0.01)
+
+    def state_at(t):
+        ts = np.array([h[0] for h in hist])
+        k = int(np.clip(np.searchsorted(ts, t), 1, len(ts) - 1))
+        f = float(np.clip((t - ts[k - 1]) / max(ts[k] - ts[k - 1], 1e-6), 0, 1))
+        return hist[k - 1][1] * (1 - f) + hist[k][1] * f
+
+    threading.Thread(target=record_state, daemon=True).start()
     try:
         time.sleep(2)
         if a.execute:
@@ -428,7 +451,7 @@ def run_robot(a, out):
             if not a.yes and input("Run the policy on the robot (e-stop in hand, workspace clear)? Type 'yes': ").strip() != "yes":
                 raise SystemExit("cancelled")
             rc = rtde_control.RTDEControlInterface(a.robot_ip, frequency=SERVO_HZ)
-            servo = Servo(rc, rr, gripper, rr.getActualQ(), g_state * 255, a.max_joint_speed_deg_s, a.blend_s)
+            servo = Servo(rc, rr, gripper, rr.getActualQ(), g_state * 255, a.max_joint_speed_deg_s, a.blend_s, a.gripper_delay_s)
             servo.thread.start()
         t_end = time.time() + a.max_seconds if a.max_seconds > 0 else float("inf")
         print(("EXECUTING" if a.execute else "SHADOW MODE (robot does not move)")
@@ -438,23 +461,31 @@ def run_robot(a, out):
         while time.time() < t_end:
             t_loop = time.time()
             img, t_img = cam.latest()
-            q = np.array(rr.getActualQ())
-            g_state = (servo.g_sent / 255.0) if servo else g_state
+            t_obs = t_img - a.camera_latency_s  # when the frame was really taken (measured with camera_latency.py)
+            q = np.array(rr.getActualQ())  # now (for the safety check)
+            q_obs = state_at(t_obs)  # the state at the moment the frame was taken: image and state match, as in training
+            if servo:
+                g_state = [g for t, g in servo.g_hist if t <= t_obs][-1:] or [servo.g_hist[0][1]]
+                g_state = g_state[0] / 255.0
             obs_img = prep(img)
-            prev_raw, delay, t0_new = None, 0, t_img
+            prev_raw, delay, t0_new = None, 0, t_obs
             if cur is not None and pol.rtc and not a.sync_steps:
-                idx = int(round((t_img - cur[0]) * FPS))  # index of the current chunk being executed at the observation
+                idx = int(round((t_obs - cur[0]) * FPS))  # index of the current chunk being executed at the observation
                 if idx < len(cur[2]) - 1:
                     prev_raw = cur[2][max(idx, 0):]
                     delay = int(np.ceil(max(latencies[-5:]) * FPS)) if latencies else 0
                     t0_new = cur[0] + max(idx, 0) / FPS  # keep the new chunk on the old chunk's timeline
-            ch, raw = pol.chunk(obs_img, np.r_[q, g_state], prev_raw=prev_raw, delay=delay, return_raw=True)
+            ch, raw = pol.chunk(obs_img, np.r_[q_obs, g_state], prev_raw=prev_raw, delay=delay, return_raw=True)
             t_ready = time.time()
-            latencies.append(t_ready - t_img)
-            problems = check_chunk(ch, q, a, T_marker_inv)
-            entry = {"t": t_img, "t0": t0_new, "rtc_delay": delay, "infer_ms": (t_ready - t_loop) * 1000, "frame_age_ms": (t_loop - t_img) * 1000, "q": q.tolist(),
+            latencies.append(t_ready - t_obs)
+            q = np.array(rr.getActualQ())
+            i_now = 0 if a.sync_steps else (t_ready - t0_new) * FPS
+            problems = check_chunk(ch, q, a, T_marker_inv, i_now)
+            entry = {"t": t_img, "t_obs": t_obs, "q_obs": q_obs.tolist(), "i_now": float(i_now), "t0": t0_new, "rtc_delay": delay, "infer_ms": (t_ready - t_loop) * 1000, "frame_age_ms": (t_loop - t_img) * 1000, "q": q.tolist(),
                      "g": g_state, "chunk": np.round(ch, 5).tolist(), "problems": problems}
             log.append(entry)
+            with open(out / "steps.jsonl", "a") as fh:  # saved as we go: a killed run keeps its log
+                fh.write(json.dumps(entry) + "\n")
             cv2.imwrite(str(out / "frames" / f"{len(log):04d}.jpg"), cv2.cvtColor(obs_img, cv2.COLOR_RGB2BGR))
             move = np.degrees(np.abs(ch[min(14, len(ch) - 1), :6] - q)).max()
             print(f"  {len(log):3d}: inference {entry['infer_ms']:4.0f} ms, frame age {entry['frame_age_ms']:3.0f} ms | in 0.5 s: largest joint move "
@@ -481,11 +512,13 @@ def run_robot(a, out):
                     t_wait = time.time()
                     while time.time() - t_wait < 1.0 and np.degrees(np.abs(np.array(rr.getActualQ()) - ch[a.sync_steps, :6])).max() > 1.0:
                         time.sleep(0.02)
+                    time.sleep(a.camera_latency_s)  # the next frame must show the arm already stopped
             else:
                 time.sleep(max(0.0, a.replan_s - (time.time() - t_loop)))
     except KeyboardInterrupt:
         print("\ninterrupted")
     finally:
+        stop_hist.set()
         if servo:
             servo.stop_flag = True
             servo.thread.join(timeout=1)
@@ -523,6 +556,11 @@ if __name__ == "__main__":
     ap.add_argument("--gripper_force", type=int, default=50)
     ap.add_argument("--max_seconds", type=float, default=30, help="0 = run until Ctrl+C")
     ap.add_argument("--replan_s", type=float, default=0.5, help="predict a new chunk this often")
+    ap.add_argument("--camera_latency_s", type=float, default=0.57,
+                    help="wrist camera latency (light -> frame on this PC), measured with scripts/robot/camera_latency.py: "
+                         "0.57 s for the HERO13 USB preview on 2026-10-06; 0 = old behaviour")
+    ap.add_argument("--gripper_delay_s", type=float, default=0.0,
+                    help="send gripper commands this much later than the arm's (e.g. 0.25): closes nearer the object")
     ap.add_argument("--blend_s", type=float, default=0.0,
                     help="continuous replanning: crossfade from the old to the new chunk over this time (e.g. 0.25) "
                          "instead of jumping; the new chunk is used fully after it")
