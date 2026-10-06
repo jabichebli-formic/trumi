@@ -19,6 +19,7 @@ export CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=8
   --policy.gradient_checkpointing=true --policy.compile_model=true --policy.push_to_hub=false \
   --rename_map="{\"observation.images.wrist\": \"observation.images.left_wrist_0_rgb\"}" \
   --batch_size=16 --steps=40000 --save_freq=10000 --log_freq=100 \
+  --wandb.enable=true --wandb.project=trumi --wandb.disable_artifact=true \
   --output_dir=outputs/<run> --job_name=<run>
 ```
 - 40k x 16 = 640k samples, as the team's earlier UR5e run and openpi's `pi05_droid_finetune` (20k x 32).
@@ -39,6 +40,24 @@ export CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=8
   compares every file's md5, and only then deletes older checkpoints on the server, which keeps just the latest
   (needed to resume). A checkpoint still being written (newer than `last`, or changed in the last 5 min) is never
   touched. Log: `data/checkpoints/backup.log`.
+
+## If something goes wrong
+- **Resource failure** (out of memory, disk full, killed, hung): the watchdog stops v2 and resumes v1 by itself.
+- **Resume any run by hand** from its latest checkpoint (keeps the same output folder and wandb run settings):
+  ```bash
+  ssh zerogrid2
+  cd ~/ur5e-lerobot
+  tmux new-session -d -s trumi-v1 "bash -c 'CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=8 .venv/bin/lerobot-train \
+    --config_path=outputs/pi05_trumi_conveyor_v1_finger_mask_b16_40k/checkpoints/last/pretrained_model/train_config.json \
+    --resume=true 2>&1 | tee -a ~/logs_pi05_trumi_v1_finger_mask.log; exec bash'"
+  ```
+  (v2: GPU 1, `pi05_trumi_conveyor_v2_fingers_visible_b16_40k`, `~/logs_pi05_trumi_v2_fingers_visible.log`.)
+- **Failed before its first checkpoint** (step < 10k): start the script again (`~/trumi_runs/train_v1_finger_mask.sh`)
+  after moving the old output folder aside (LeRobot refuses an existing output folder).
+- **wandb**: project `trumi` (team `msaryan-formic`), logs only: `--wandb.disable_artifact=true` stops LeRobot from
+  uploading every checkpoint's 8.8 GB model.
+- **Desktop backup stopped** (e.g. the desktop restarted): `tmux new-session -d -s trumi-backup "python3
+  scripts/tools/checkpoint_backup.py; exec bash"` from ~/trumi; it picks up where it left off.
 
 ## Checking on it
 ```bash

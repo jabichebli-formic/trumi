@@ -125,7 +125,8 @@ def main(a):
                      f"(fingertip set-back {setback.min():.1f}-{setback.max():.1f} mm compensated)")
     if a.grip_close_below_mm > 0:  # holding an object: close fully so the Robotiq stops on contact and applies force
         # hysteresis: holding starts when the TRumi gap drops below grip_close_below_mm and ends only when it opens past
-        # grip_release_above_mm, so small gap changes mid-carry (14-17 mm in the 2026-10 demos) do not loosen the grip
+        # grip_release_above_mm, so small gap changes mid-carry (up to ~17 mm in the 2026-10 demos) do not loosen the grip;
+        # 20 mm releases at most ~0.18 s / 10 mm after the hand starts opening (30 mm: up to 0.55 s / 78 mm)
         holding = np.zeros(len(width), bool)
         h = False
         for i, wmm in enumerate(width * 1000):
@@ -301,7 +302,7 @@ if __name__ == "__main__":
     ap.add_argument("--out_subdir", default="preflight", help="output folder inside the session")
     ap.add_argument("--grip_close_below_mm", type=float, default=0.0,
                     help="command the gripper fully closed while the TRumi gap is below this (grip with force); 0 = off")
-    ap.add_argument("--grip_release_above_mm", type=float, default=30.0,
+    ap.add_argument("--grip_release_above_mm", type=float, default=20.0,
                     help="with --grip_close_below_mm: stay fully closed until the TRumi gap opens past this")
     ap.add_argument("--gripper_tables", type=pathlib.Path, default=None,
                     help="measured width->command table and fingertip arc (scripts/tools/gripper_sweep_table.py output)")

@@ -147,7 +147,7 @@ def stage_retarget(s, cfg, st, log):
               "--cell", REPO / r["cell"], "--tcp_z_mm", r["tcp_z_mm"], "--smooth_s", r["smooth_s"],
               "--correction_mm", *r["correction_mm"], "--gripper_tables", REPO / r["gripper_tables"],
               "--reference_q_deg", *r["reference_q_deg"], "--grip_close_below_mm", r.get("grip_close_below_mm", 0),
-              "--grip_release_above_mm", r.get("grip_release_above_mm", 30)]
+              "--grip_release_above_mm", r.get("grip_release_above_mm", 20)]
 
     def one(k):
         with open(out / "logs" / f"ep{k}.log", "w") as fh:
