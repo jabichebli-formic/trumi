@@ -124,10 +124,16 @@ def main(a):
         notes.append(f"gripper: measured width->command table and arc from {a.gripper_tables} "
                      f"(fingertip set-back {setback.min():.1f}-{setback.max():.1f} mm compensated)")
     if a.grip_close_below_mm > 0:  # holding an object: close fully so the Robotiq stops on contact and applies force
-        holding = width * 1000 < a.grip_close_below_mm
+        # hysteresis: holding starts when the TRumi gap drops below grip_close_below_mm and ends only when it opens past
+        # grip_release_above_mm, so small gap changes mid-carry (14-17 mm in the 2026-10 demos) do not loosen the grip
+        holding = np.zeros(len(width), bool)
+        h = False
+        for i, wmm in enumerate(width * 1000):
+            h = wmm < a.grip_close_below_mm or (h and wmm <= a.grip_release_above_mm)
+            holding[i] = h
         grip = np.where(holding, 255.0, grip)
-        notes.append(f"gripper: fully closed (255) while the TRumi gap is below {a.grip_close_below_mm:.0f} mm "
-                     f"({holding.mean() * 100:.0f}% of the episode)")
+        notes.append(f"gripper: fully closed (255) from when the TRumi gap drops below {a.grip_close_below_mm:.0f} mm until it "
+                     f"opens past {a.grip_release_above_mm:.0f} mm ({holding.mean() * 100:.0f}% of the episode)")
 
     # --- IK through the trajectory, starting from the best collision-free configuration
     pl = Planner(cell, controller_yaw_deg=ctrl_yaw, tcp_z_mm=a.tcp_z_mm)
@@ -295,6 +301,8 @@ if __name__ == "__main__":
     ap.add_argument("--out_subdir", default="preflight", help="output folder inside the session")
     ap.add_argument("--grip_close_below_mm", type=float, default=0.0,
                     help="command the gripper fully closed while the TRumi gap is below this (grip with force); 0 = off")
+    ap.add_argument("--grip_release_above_mm", type=float, default=30.0,
+                    help="with --grip_close_below_mm: stay fully closed until the TRumi gap opens past this")
     ap.add_argument("--gripper_tables", type=pathlib.Path, default=None,
                     help="measured width->command table and fingertip arc (scripts/tools/gripper_sweep_table.py output)")
     ap.add_argument("--no_box", action="store_true", help="leave the box out of the collision check (position unknown)")
