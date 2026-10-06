@@ -284,6 +284,39 @@ class Servo:
             self.error = f"{type(e).__name__}: {e}"
 
 
+def move_home(a):
+    """Slow, twin-checked joint move to the in-distribution start pose (data/robot/policy_home_*.json)."""
+    import rtde_control
+    import rtde_receive
+    from replay_on_robot import start_move_collisions
+
+    home = np.array(json.load(open(a.home_pose))["q_rad"])
+    rr = rtde_receive.RTDEReceiveInterface(a.robot_ip)
+    q = np.array(rr.getActualQ())
+    move = np.degrees(home - q)
+    print(f"home {np.round(np.degrees(home), 1).tolist()} deg | move per joint {np.round(move, 0).tolist()} deg")
+    if np.abs(move).max() < 0.5:
+        print("already at home")
+        return
+    hits = start_move_collisions({"tcp_z_mm": a.tcp_z_mm}, q, home)
+    print("twin check of the move: " + ("no collisions" if not hits else f"COLLISIONS with {', '.join(hits)}"))
+    if hits and not a.ignore_twin:
+        raise SystemExit("refusing the move home; bring the robot closer by hand (freedrive) first, or --ignore_twin "
+                         "if the operator has checked the path on the real cell (the twin's box/belt are approximate)")
+    if hits:
+        print("WARNING: twin reports contacts, moving anyway because the operator checked the real path (--ignore_twin)")
+    if not a.yes and input("Move SLOWLY to the home pose (e-stop in hand, workspace clear)? Type 'yes': ").strip() != "yes":
+        raise SystemExit("cancelled")
+    rc = rtde_control.RTDEControlInterface(a.robot_ip)
+    try:
+        rc.moveJ(home.tolist(), a.home_speed, 0.5)
+    finally:
+        rc.stopScript()
+    q = np.array(rr.getActualQ())
+    rr.disconnect()
+    print(f"at home: largest joint error {np.degrees(np.abs(q - home)).max():.2f} deg")
+
+
 # ---------------------------------------------------------------- modes
 def run_dataset(a):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -431,6 +464,11 @@ if __name__ == "__main__":
     ap.add_argument("--gopro_ip", help="default: found from the USB network (172.2X.1YZ.51)")
     ap.add_argument("--robot_ip")
     ap.add_argument("--execute", action="store_true", help="move the robot (otherwise shadow mode)")
+    ap.add_argument("--home", action="store_true", help="first move slowly to the in-distribution home pose (robot moves)")
+    ap.add_argument("--home_only", action="store_true", help="only move to the home pose, then stop (robot moves)")
+    ap.add_argument("--home_pose", type=pathlib.Path, default=REPO / "data" / "robot" / "policy_home_robot1.json")
+    ap.add_argument("--home_speed", type=float, default=0.3, help="rad/s")
+    ap.add_argument("--ignore_twin", action="store_true", help="home move: operator checked the real path, ignore twin contacts")
     ap.add_argument("--yes", action="store_true", help="skip the typed confirmation (operator confirmed beforehand)")
     ap.add_argument("--no_gripper", action="store_true")
     ap.add_argument("--gripper_speed", type=int, default=255)
@@ -451,7 +489,11 @@ if __name__ == "__main__":
     elif a.camera_test:
         (out / "frames").mkdir(parents=True)
         run_camera_test(a, out)
+    elif a.robot_ip and a.home_only:
+        move_home(a)
     elif a.robot_ip:
+        if a.home:
+            move_home(a)
         if not a.checkpoint:
             raise SystemExit("--checkpoint is required")
         (out / "frames").mkdir(parents=True)
