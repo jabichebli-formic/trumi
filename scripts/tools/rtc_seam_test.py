@@ -21,7 +21,7 @@ from run_policy import FPS, Policy  # noqa: E402
 
 
 def run(pol, ds, episodes, replan, delay, use_rtc):
-    jumps, vjumps, times = [], [], []
+    jumps, vjumps, times, track = [], [], [], []
     for e in episodes:
         m = ds.meta.episodes[e]
         start, length = int(m["dataset_from_index"]), int(m["length"])
@@ -40,21 +40,30 @@ def run(pol, ds, episodes, replan, delay, use_rtc):
                 if i_old + 1 < len(cur[1]):
                     jumps.append(np.degrees(np.abs(ch[delay, :6] - cur[1][i_old, :6])).max())
                     vjumps.append(np.degrees(np.abs((ch[delay + 1, :6] - ch[delay, :6]) - (cur[1][i_old + 1, :6] - cur[1][i_old, :6]))).max() * FPS)
+            # what would actually be executed from this chunk (until the next one takes over) vs what the human did
+            n = min(replan + delay, length - k)
+            truth = np.stack([ds[start + k + j]["action"].numpy() for j in range(delay, n)]) if n > delay else None
+            if truth is not None:
+                track.append(np.degrees(np.abs(ch[delay:n, :6] - truth[:, :6])).max(axis=1).mean())
             cur = (k, ch, raw)
-    return np.array(jumps), np.array(vjumps), np.array(times)
+    return np.array(jumps), np.array(vjumps), np.array(times), np.array(track)
 
 
 def main(a):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     ds = LeRobotDataset(a.repo_id, root=a.dataset)
-    pol = Policy(a.checkpoint, a.device, rtc_horizon=a.rtc_horizon, seed=0)
     replan = int(round(a.replan_s * FPS))
-    for use_rtc in (False, True):
-        j, v, t = run(pol, ds, a.episodes, replan, a.delay, use_rtc)
-        print(f"RTC {'on ' if use_rtc else 'off'} (horizon {a.rtc_horizon}, delay {a.delay} steps, new chunk every {replan} steps): "
-              f"position jump at the seam median {np.median(j):.1f} deg, 90% {np.percentile(j, 90):.1f}, max {j.max():.1f} | "
-              f"velocity jump median {np.median(v):.0f} deg/s, max {v.max():.0f} | inference median {np.median(t[1:]) * 1000:.0f} ms")
+    for h in a.rtc_horizon:
+        pol = Policy(a.checkpoint, a.device, rtc_horizon=h, seed=0)
+        j, v, t, tr = run(pol, ds, a.episodes, replan, a.delay, h > 0)
+        print(f"RTC {'horizon ' + str(h) if h else 'off       '} (delay {a.delay}, new chunk every {replan} steps): seam jump median {np.median(j):.2f} deg, "
+              f"max {j.max():.1f} | velocity jump max {v.max():.0f} deg/s | executed actions vs human: {np.median(tr):.2f} deg median, "
+              f"90% {np.percentile(tr, 90):.2f} | inference {np.median(t[1:]) * 1000:.0f} ms")
+        del pol
+        import torch
+
+        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
@@ -65,6 +74,6 @@ if __name__ == "__main__":
     ap.add_argument("--episodes", type=int, nargs="+", default=[0, 10, 20])
     ap.add_argument("--replan_s", type=float, default=0.5)
     ap.add_argument("--delay", type=int, default=6, help="actions executed during one inference (~0.2 s at 30 fps)")
-    ap.add_argument("--rtc_horizon", type=int, default=25)
+    ap.add_argument("--rtc_horizon", type=int, nargs="+", default=[0, 10, 25], help="0 = RTC off")
     ap.add_argument("--device", default="cuda")
     main(ap.parse_args())

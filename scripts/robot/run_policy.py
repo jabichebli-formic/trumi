@@ -430,7 +430,7 @@ def run_robot(a, out):
             g_state = (servo.g_sent / 255.0) if servo else g_state
             obs_img = prep(img)
             prev_raw, delay, t0_new = None, 0, t_img
-            if cur is not None and pol.rtc:
+            if cur is not None and pol.rtc and not a.sync_steps:
                 idx = int(round((t_img - cur[0]) * FPS))  # index of the current chunk being executed at the observation
                 if idx < len(cur[2]) - 1:
                     prev_raw = cur[2][max(idx, 0):]
@@ -455,10 +455,22 @@ def run_robot(a, out):
                 if servo.error:
                     print(f"stopping: {servo.error}")
                     break
-                servo.set_chunk(t0_new, ch)  # past actions are skipped by wall clock
+                if a.sync_steps:
+                    # synchronous: the arm stood still during inference, so start this chunk now from action 0, run
+                    # the first sync_steps actions as trained (no stitching), then wait for the arm before looking again
+                    servo.set_chunk(time.time(), ch[: a.sync_steps + 1])
+                else:
+                    servo.set_chunk(t0_new, ch)  # past actions are skipped by wall clock
             if not problems:
                 cur = (t0_new, ch, raw)
-            time.sleep(max(0.0, a.replan_s - (time.time() - t_loop)))
+            if a.sync_steps:
+                time.sleep(a.sync_steps / FPS)
+                if servo:  # let the speed-limited arm reach the last target (at most 1 s)
+                    t_wait = time.time()
+                    while time.time() - t_wait < 1.0 and np.degrees(np.abs(np.array(rr.getActualQ()) - ch[a.sync_steps, :6])).max() > 1.0:
+                        time.sleep(0.02)
+            else:
+                time.sleep(max(0.0, a.replan_s - (time.time() - t_loop)))
     except KeyboardInterrupt:
         print("\ninterrupted")
     finally:
@@ -499,6 +511,9 @@ if __name__ == "__main__":
     ap.add_argument("--gripper_force", type=int, default=50)
     ap.add_argument("--max_seconds", type=float, default=30, help="0 = run until Ctrl+C")
     ap.add_argument("--replan_s", type=float, default=0.5, help="predict a new chunk this often")
+    ap.add_argument("--sync_steps", type=int, default=0,
+                    help="synchronous: predict, run the first N actions of the chunk (e.g. 25 = 0.83 s), predict again "
+                         "(arm pauses ~0.2 s per chunk; no stitching, no RTC). 0 = continuous replanning")
     ap.add_argument("--rtc_horizon", type=int, default=0,
                     help="real-time chunking: steer each new chunk to continue the first N actions of the old one "
                          "(0 = off; e.g. 25 with --replan_s 0.5)")
@@ -510,6 +525,7 @@ if __name__ == "__main__":
     ap.add_argument("--mask", type=pathlib.Path, default=REPO / "data" / "robot" / "policy_mask_2704x2028.png",
                     help="must match the dataset the checkpoint was trained on (fingers-visible: policy_mask_gripper_only_2704x2028.png)")
     a = ap.parse_args()
+    a.sync_steps = min(max(a.sync_steps, 0), 49)  # chunks have 50 actions
     out = REPO / "data" / "robot" / "policy_runs" / datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     if a.dataset:
         run_dataset(a)
