@@ -407,8 +407,9 @@ def run_robot(a, out):
             rc = rtde_control.RTDEControlInterface(a.robot_ip, frequency=SERVO_HZ)
             servo = Servo(rc, rr, gripper, rr.getActualQ(), g_state * 255, a.max_joint_speed_deg_s)
             servo.thread.start()
-        t_end = time.time() + a.max_seconds
-        print(("EXECUTING" if a.execute else "SHADOW MODE (robot does not move)") + f" for up to {a.max_seconds:.0f} s; Ctrl+C to stop")
+        t_end = time.time() + a.max_seconds if a.max_seconds > 0 else float("inf")
+        print(("EXECUTING" if a.execute else "SHADOW MODE (robot does not move)")
+              + (f" for up to {a.max_seconds:.0f} s" if a.max_seconds > 0 else " until Ctrl+C") + "; Ctrl+C to stop")
         while time.time() < t_end:
             t_loop = time.time()
             img, t_img = cam.latest()
@@ -473,7 +474,7 @@ if __name__ == "__main__":
     ap.add_argument("--no_gripper", action="store_true")
     ap.add_argument("--gripper_speed", type=int, default=255)
     ap.add_argument("--gripper_force", type=int, default=50)
-    ap.add_argument("--max_seconds", type=float, default=30)
+    ap.add_argument("--max_seconds", type=float, default=30, help="0 = run until Ctrl+C")
     ap.add_argument("--replan_s", type=float, default=0.5, help="predict a new chunk this often")
     ap.add_argument("--max_joint_speed_deg_s", type=float, default=60)
     ap.add_argument("--max_jump_deg", type=float, default=20)
