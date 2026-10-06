@@ -480,6 +480,8 @@ def run_robot(a, out):
             ch, raw = pol.chunk(obs_img, np.r_[q_obs, g_state], prev_raw=prev_raw, delay=delay, return_raw=True)
             t_ready = time.time()
             latencies.append(t_ready - t_obs)
+            if cur is None:  # first chunk: the arm stood still meanwhile, so none of it was executed: start at action 0
+                t0_new = t_ready
             q = np.array(rr.getActualQ())
             i_now = 0 if a.sync_steps else (t_ready - t0_new) * FPS
             problems = check_chunk(ch, q, a, T_marker_inv, i_now)
