@@ -16,6 +16,7 @@
   "cell": "data/sim/cell.json",
   "tcp_z_mm": 257.2,
   "gripper_tables": "data/robot/gripper_sweep_20261005_132055_tables.json",
+  "grip_close_below_mm": 15,
   "correction_mm": [
    -12.3,
    0.3,

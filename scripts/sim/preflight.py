@@ -123,6 +123,11 @@ def main(a):
         setback = np.interp(grip, gt["arc"]["robotiq_pos"], gt["arc"]["fingertip_setback_mm"])
         notes.append(f"gripper: measured width->command table and arc from {a.gripper_tables} "
                      f"(fingertip set-back {setback.min():.1f}-{setback.max():.1f} mm compensated)")
+    if a.grip_close_below_mm > 0:  # holding an object: close fully so the Robotiq stops on contact and applies force
+        holding = width * 1000 < a.grip_close_below_mm
+        grip = np.where(holding, 255.0, grip)
+        notes.append(f"gripper: fully closed (255) while the TRumi gap is below {a.grip_close_below_mm:.0f} mm "
+                     f"({holding.mean() * 100:.0f}% of the episode)")
 
     # --- IK through the trajectory, starting from the best collision-free configuration
     pl = Planner(cell, controller_yaw_deg=ctrl_yaw, tcp_z_mm=a.tcp_z_mm)
@@ -288,6 +293,8 @@ if __name__ == "__main__":
                     help="prefer the arm configuration closest to these joint angles (consistent joints across episodes)")
     ap.add_argument("--max_starts", type=int, default=4, help="arm configurations to try for the first pose")
     ap.add_argument("--out_subdir", default="preflight", help="output folder inside the session")
+    ap.add_argument("--grip_close_below_mm", type=float, default=0.0,
+                    help="command the gripper fully closed while the TRumi gap is below this (grip with force); 0 = off")
     ap.add_argument("--gripper_tables", type=pathlib.Path, default=None,
                     help="measured width->command table and fingertip arc (scripts/tools/gripper_sweep_table.py output)")
     ap.add_argument("--no_box", action="store_true", help="leave the box out of the collision check (position unknown)")

@@ -146,7 +146,7 @@ def stage_retarget(s, cfg, st, log):
     common = ["--session", s, *([] if r.get("videos") else ["--no_video"]), "--out_subdir", r["out_subdir"], "--calibration", REPO / r["calibration"],
               "--cell", REPO / r["cell"], "--tcp_z_mm", r["tcp_z_mm"], "--smooth_s", r["smooth_s"],
               "--correction_mm", *r["correction_mm"], "--gripper_tables", REPO / r["gripper_tables"],
-              "--reference_q_deg", *r["reference_q_deg"]]
+              "--reference_q_deg", *r["reference_q_deg"], "--grip_close_below_mm", r.get("grip_close_below_mm", 0)]
 
     def one(k):
         with open(out / "logs" / f"ep{k}.log", "w") as fh:
