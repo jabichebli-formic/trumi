@@ -110,10 +110,14 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   is executed.
 - **First working run (2026-10-06, 111103)**: 40k v1, `--blend_s 0.35 --camera_latency_s 0.07
   --max_joint_speed_deg_s 180`: 44.6 s, 5 grasps, 4 releases into the box before the old 20 deg check stopped it.
-- **Floor: hold, don't stop** (`--min_height_mm`, default 0 = marker plane). The demos set cups down on the box floor
+- **Floor: hold, don't stop** (`--min_height_mm`, default 10 mm above the marker plane; was 0). The demos set cups down on the box floor
   (box on the marker's table, floor ~3 mm above the plane; demo fingertip down to -1.1 cm there, within calibration
   error), so the policy sometimes plans the end of a chunk slightly below the plane. Such targets are now held at the last
   target above the floor (gripper values kept, so it still releases) instead of stopping the run. Both floor stops on
   2026-10-06 (-4 and -8 mm, 1.2-1.6 s ahead in the chunk) pass this way; of 715 logged chunks none is refused.
 - **Per-joint run (2026-10-06, 111930)**: same settings with the per-joint jump limits: 193 s, 18 grasps, 18 releases,
   ended by the old floor stop.
+- **Drop height** (2026-10-06, 113206, floor 0, 242 s, 22 grasps / 22 releases, Ctrl+C): the floor hold never triggered
+  (lowest planned +1.6 mm). Lowest fingertip in the 1 s before a release: robot median 4.0 cm (0.4-7.9), demos 5.5 cm
+  (-0.8-12.9). Floor raised to 10 mm on request: on 1192 logged chunks it would hold targets in 6 (1 in the executed
+  part). For visibly higher drops use e.g. `--min_height_mm 30` (picks close at 8-11 cm, belt is 2.8 cm above the plane).

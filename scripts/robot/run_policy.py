@@ -602,7 +602,7 @@ if __name__ == "__main__":
                     help="refuse a chunk whose target due now is further than this from the robot: one value, or one per "
                          "joint (base .. wrist roll). Default: 1.2 x the 99th percentile of each joint's change over 0.5 s "
                          "(one replan) in the human demos (trumi_conveyor_pick_v1, 38 episodes)")
-    ap.add_argument("--min_height_mm", type=float, default=0, help="fingertip never below this height above the marker plane: lower targets are held at the last one above it")
+    ap.add_argument("--min_height_mm", type=float, default=10, help="fingertip never below this height above the marker plane: lower targets are held at the last one above it")
     ap.add_argument("--tcp_z_mm", type=float, default=257.2)
     ap.add_argument("--calibration", type=pathlib.Path, default=REPO / "data" / "robot" / "marker_in_robot_base.json")
     ap.add_argument("--mask", type=pathlib.Path, default=REPO / "data" / "robot" / "policy_mask_2704x2028.png",
