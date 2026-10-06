@@ -121,3 +121,13 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   (lowest planned +1.6 mm). Lowest fingertip in the 1 s before a release: robot median 4.0 cm (0.4-7.9), demos 5.5 cm
   (-0.8-12.9). Floor raised to 10 mm on request: on 1192 logged chunks it would hold targets in 6 (1 in the executed
   part). For visibly higher drops use e.g. `--min_height_mm 30` (picks close at 8-11 cm, belt is 2.8 cm above the plane).
+- **Fingers-visible model on robot 1 (2026-10-06, 114144)**: v2 40k with `--mask
+  data/robot/policy_mask_gripper_only_2704x2028.png`, same settings: 323 s, 30 grasps, 30 releases, no refusals, floor
+  hold in 1 of 647 chunks. Offline on its own dataset: 0.8 deg median (same as v1). No visible difference from v1.
+
+## Training data (both models)
+38 episodes, 9,509 frames at 30 fps (5.3 min, ~8.3 s each), from 48 recorded demos (2026-10-02, ep_0-ep_47):
+- not in the dataset plan, no usable SLAM trajectory when it was built: ep_11, 39, 41, 42, 44, 45, 46 (ep_41/42 have
+  none at all; the other five have a trajectory file now but were not in the plan, not investigated)
+- SLAM tracking glitch (path jumps far from the cell, `episode_report.py`): ep_27, ep_31
+- manual: ep_4 (the return passes near a shoulder singularity, up to 497 deg/s)
