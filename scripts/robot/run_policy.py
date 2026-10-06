@@ -18,9 +18,10 @@ Modes:
                                   do, the robot does NOT move.
   --robot_ip IP --execute         moves the robot. Check list: e-stop in hand, nobody within reach, Remote mode,
                                   pendant TCP = --tcp_z_mm, gripper activated.
-Safety (execute): joint-speed limit (--max_joint_speed_deg_s, default 60), a chunk is refused if its first target is
-more than --max_jump_deg (per joint) from the robot or any target puts the fingertip below --min_height_mm above the marker plane
-(robot calibration) or outside the UR joint limits; --max_seconds; Ctrl+C stops (servoStop).
+Safety (execute): joint-speed limit (--max_joint_speed_deg_s, default 60), a chunk is refused if its target due now is
+more than --max_jump_deg (per joint) from the robot or any target is outside the UR joint limits. Planned targets that
+would put the fingertip below --min_height_mm above the marker plane (robot calibration) are held at the last target
+above it (the gripper part of the plan is kept, so it still releases); --max_seconds; Ctrl+C stops (servoStop).
 
 Usage (from ~/trumi, LeRobot 0.6 environment, e.g. ~/YAM/yam-lerobot/.venv/bin/python):
   python scripts/robot/run_policy.py --checkpoint <.../pretrained_model> --dataset data/lerobot/trumi_conveyor_pick_v1
@@ -229,6 +230,25 @@ def fingertip_height_mm(q, T_marker_inv, tcp_z):
         T = T @ np.array([[ct, -st * ca, st * sa, DH_A[i] * ct], [st, ct * ca, -ct * sa, DH_A[i] * st], [0, sa, ca, DH_D[i]], [0, 0, 0, 1]])
     tip = T[:3, 3] + T[:3, 2] * tcp_z
     return float((T_marker_inv @ np.r_[tip, 1])[2] * 1000)
+
+
+def hold_above_floor(chunk, q_now, a, T_marker_inv):
+    """Replace arm targets whose fingertip is below --min_height_mm by the last target above it (gripper values kept).
+
+    The policy copies the demos, which set cups down on the box floor at about the marker plane (lowest -1.1 cm).
+    Returns (chunk, number of targets held, lowest planned fingertip height in mm).
+    """
+    h = np.array([fingertip_height_mm(q, T_marker_inv, a.tcp_z_mm / 1000) for q in chunk[:, :6]])
+    low = np.flatnonzero(h < a.min_height_mm)
+    if not len(low):
+        return chunk, 0, float(h.min())
+    out, last = chunk.copy(), np.array(q_now, float)
+    for i in range(len(out)):
+        if h[i] < a.min_height_mm:
+            out[i, :6] = last
+        else:
+            last = out[i, :6]
+    return out, len(low), float(h.min())
 
 
 def check_chunk(chunk, q_now, a, T_marker_inv, i_now=0):
@@ -485,8 +505,9 @@ def run_robot(a, out):
                 t0_new = t_ready
             q = np.array(rr.getActualQ())
             i_now = 0 if a.sync_steps else (t_ready - t0_new) * FPS
+            ch, n_held, low_mm = hold_above_floor(ch, q, a, T_marker_inv)
             problems = check_chunk(ch, q, a, T_marker_inv, i_now)
-            entry = {"t": t_img, "t_obs": t_obs, "q_obs": q_obs.tolist(), "i_now": float(i_now), "t0": t0_new, "rtc_delay": delay, "infer_ms": (t_ready - t_loop) * 1000, "frame_age_ms": (t_loop - t_img) * 1000, "q": q.tolist(),
+            entry = {"held_at_floor": n_held, "lowest_planned_mm": low_mm, "t": t_img, "t_obs": t_obs, "q_obs": q_obs.tolist(), "i_now": float(i_now), "t0": t0_new, "rtc_delay": delay, "infer_ms": (t_ready - t_loop) * 1000, "frame_age_ms": (t_loop - t_img) * 1000, "q": q.tolist(),
                      "g": g_state, "chunk": np.round(ch, 5).tolist(), "problems": problems}
             log.append(entry)
             with open(out / "steps.jsonl", "a") as fh:  # saved as we go: a killed run keeps its log
@@ -494,7 +515,8 @@ def run_robot(a, out):
             cv2.imwrite(str(out / "frames" / f"{len(log):04d}.jpg"), cv2.cvtColor(obs_img, cv2.COLOR_RGB2BGR))
             move = np.degrees(np.abs(ch[min(14, len(ch) - 1), :6] - q)).max()
             print(f"  {len(log):3d}: inference {entry['infer_ms']:4.0f} ms, frame age {entry['frame_age_ms']:3.0f} ms | in 0.5 s: largest joint move "
-                  f"{move:5.1f} deg, gripper {ch[min(14, len(ch) - 1), 6]:.2f}" + (f" | REFUSED: {'; '.join(problems)}" if problems else ""))
+                  f"{move:5.1f} deg, gripper {ch[min(14, len(ch) - 1), 6]:.2f}"
+                  + (f" | {n_held} targets held at the floor (planned down to {low_mm:.0f} mm)" if n_held else "") + (f" | REFUSED: {'; '.join(problems)}" if problems else ""))
             if problems:
                 if a.execute:
                     print("stopping: unsafe chunk")
@@ -580,7 +602,7 @@ if __name__ == "__main__":
                     help="refuse a chunk whose target due now is further than this from the robot: one value, or one per "
                          "joint (base .. wrist roll). Default: 1.2 x the 99th percentile of each joint's change over 0.5 s "
                          "(one replan) in the human demos (trumi_conveyor_pick_v1, 38 episodes)")
-    ap.add_argument("--min_height_mm", type=float, default=0, help="fingertip never below this height above the marker plane")
+    ap.add_argument("--min_height_mm", type=float, default=0, help="fingertip never below this height above the marker plane: lower targets are held at the last one above it")
     ap.add_argument("--tcp_z_mm", type=float, default=257.2)
     ap.add_argument("--calibration", type=pathlib.Path, default=REPO / "data" / "robot" / "marker_in_robot_base.json")
     ap.add_argument("--mask", type=pathlib.Path, default=REPO / "data" / "robot" / "policy_mask_2704x2028.png",

@@ -110,3 +110,10 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   is executed.
 - **First working run (2026-10-06, 111103)**: 40k v1, `--blend_s 0.35 --camera_latency_s 0.07
   --max_joint_speed_deg_s 180`: 44.6 s, 5 grasps, 4 releases into the box before the old 20 deg check stopped it.
+- **Floor: hold, don't stop** (`--min_height_mm`, default 0 = marker plane). The demos set cups down on the box floor
+  (box on the marker's table, floor ~3 mm above the plane; demo fingertip down to -1.1 cm there, within calibration
+  error), so the policy sometimes plans the end of a chunk slightly below the plane. Such targets are now held at the last
+  target above the floor (gripper values kept, so it still releases) instead of stopping the run. Both floor stops on
+  2026-10-06 (-4 and -8 mm, 1.2-1.6 s ahead in the chunk) pass this way; of 715 logged chunks none is refused.
+- **Per-joint run (2026-10-06, 111930)**: same settings with the per-joint jump limits: 193 s, 18 grasps, 18 releases,
+  ended by the old floor stop.
