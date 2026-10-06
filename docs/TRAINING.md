@@ -93,9 +93,12 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   predicts is unchanged. Replaying the logged run through the controller: velocity jumps 114 -> 16 deg/s (99th pct),
   peak acceleration 14,300 -> 2,000 deg/s^2. RTC (horizon 25) was smooth live but kept closing at one spot; sync
   (`--sync_steps`) also did not work for the user.
-- **Camera latency 0.57 s** (HERO13 USB preview, `scripts/robot/camera_latency.py`: gripper opens/closes, its
-  reported position vs the finger tags in the live video; 8 moves, 537-597 ms). The policy was getting a 0.57 s old
-  image with the current joint state. `run_policy.py --camera_latency_s 0.57` (default) pairs each frame with the
-  robot state and gripper command from when it was taken (state history at 100 Hz), places the chunk on that timeline
-  (actions already in the past are skipped) and checks safety against the action due now. An HDMI capture path
-  (Media Mod + capture card) should be far faster (UMI used one) if the 0.57 s limits a moving belt.
+- **Camera latency 73 ms** (HERO13 USB preview, `scripts/robot/camera_latency.py`: the gripper opens/closes, its
+  reported position vs the finger tags in the live video; 8 moves, 48-101 ms). It was 0.57 s until 2026-10-06: FFmpeg
+  frame-threaded HEVC decoding (16 threads on this PC) holds back 15 frames = 0.5 s at 30 fps; `GoProPreview` now uses
+  slice threading (no frames held back, 2.7K still decodes at ~110 fps). Check any new decoding code for this.
+  `run_policy.py --camera_latency_s 0.07` (default) pairs each frame with the robot state and gripper command from when
+  it was taken (state history at 100 Hz), places the chunk on that timeline (actions already in the past are skipped)
+  and checks safety against the action due now. With 0.57 s that left ~23 of 50 actions in the past on arrival and a
+  chunk was refused (24 deg from the robot). UMI's HDMI path (Media Mod + Cam Link 4K) is set to 0.17 s in their code,
+  so a capture card would not be faster than the fixed USB preview.

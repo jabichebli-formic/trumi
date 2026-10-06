@@ -558,9 +558,9 @@ if __name__ == "__main__":
     ap.add_argument("--gripper_force", type=int, default=50)
     ap.add_argument("--max_seconds", type=float, default=30, help="0 = run until Ctrl+C")
     ap.add_argument("--replan_s", type=float, default=0.5, help="predict a new chunk this often")
-    ap.add_argument("--camera_latency_s", type=float, default=0.57,
+    ap.add_argument("--camera_latency_s", type=float, default=0.07,
                     help="wrist camera latency (light -> frame on this PC), measured with scripts/robot/camera_latency.py: "
-                         "0.57 s for the HERO13 USB preview on 2026-10-06; 0 = old behaviour")
+                         "0.073 s for the HERO13 USB preview with slice decoding (0.57 s before, 2026-10-06); 0 = ignore")
     ap.add_argument("--gripper_delay_s", type=float, default=0.0,
                     help="send gripper commands this much later than the arm's (e.g. 0.25): closes nearer the object")
     ap.add_argument("--blend_s", type=float, default=0.0,
