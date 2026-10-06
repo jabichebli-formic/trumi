@@ -66,3 +66,20 @@ ssh zerogrid2 tail ~/trumi_runs/watchdog.log       # failures / restarts
 tail ~/trumi/data/checkpoints/backup.log           # backups and pruning
 ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-b d to detach)
 ```
+
+## Running a trained policy on the robot (`scripts/robot/run_policy.py`)
+- **Camera: one USB-C cable**, no capture card. The HERO13's USB networking ("GoPro Connect") gives an Open GoPro
+  preview stream (UDP, HEVC 1920x1440 4:3, 30 fps). Finger-tag positions in the preview match the recorded 2.7K video
+  within 5 px of 1920 (< 2 px at the policy's 640x480). The preview does not stream while the camera records.
+- **Environment**: `~/YAM/yam-lerobot/.venv` (LeRobot 0.6.0, ur_rtde, CUDA). Checkpoints from the training server's
+  LeRobot 0.6.2 load after dropping six newer config settings that are switched off in our runs (the script refuses if
+  they are on) and pointing the tokenizer at the checkpoint folder. Seeded predictions agree with 0.6.2 within 0.47 deg.
+- **This PC (RTX 5080, 16 GB)**: load 48 s (peak 18 GB system RAM), 9.9 GB GPU, ~154 ms per 50-action chunk without
+  torch.compile (`--compile` gives the training speed after ~6 min of warm-up).
+- **Offline check** (no robot): `--dataset data/lerobot/<name>` compares predicted chunks with the recorded actions
+  (40k v1: 0.8-0.9 deg on training frames, i.e. the pipeline is wired right; it says nothing about generalisation).
+- **Shadow mode** (default with `--robot_ip`): live camera + robot state, the policy predicts and logs, nothing moves
+  (the gripper is only read). `--execute` moves the robot: joint-speed limit, refuses chunks that start far from the
+  robot or reach below the marker plane, Ctrl+C stops.
+- **Mask must match the checkpoint**: v1 = `policy_mask_2704x2028.png` (default), v2 (fingers visible) =
+  `--mask data/robot/policy_mask_gripper_only_2704x2028.png`.
