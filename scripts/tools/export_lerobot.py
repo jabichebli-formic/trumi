@@ -32,15 +32,17 @@ SLAM_STRIDE = 2  # SLAM steps are every 2nd video frame (120 fps video -> 60 Hz)
 JOINTS = ["shoulder_pan", "shoulder_lift", "elbow", "wrist_1", "wrist_2", "wrist_3"]
 
 
-def frames_at(video, indices):
-    """Decode the given frame indices (sorted) from a video, as RGB arrays."""
+def frames_at(video, indices, process=None):
+    """Decode the given frame indices (sorted) from a video, as RGB arrays. `process` is applied to each frame as soon
+    as it is decoded, so only processed (small) frames are kept: a full 2.7K episode in memory is ~5 GB."""
     want, out = set(indices), {}
     with av.open(str(video)) as c:
         s = c.streams.video[0]
         s.thread_type = "AUTO"
         for i, fr in enumerate(c.decode(s)):
             if i in want:
-                out[i] = fr.to_ndarray(format="rgb24")
+                img = fr.to_ndarray(format="rgb24")
+                out[i] = process(img) if process else img
             if i >= indices[-1]:
                 break
     return [out[i] for i in indices]
@@ -75,12 +77,13 @@ def main(a):
         steps = list(range(0, n, step))
         cam = ep["cameras"][0]
         video = a.session / "demos" / cam["video_path"]
-        imgs = frames_at(video, [cam["video_start_end"][0] + SLAM_STRIDE * s for s in steps])
+        def masked_small(img):
+            img[mask] = 0
+            return cv2.resize(img, (a.width, a.height), interpolation=cv2.INTER_AREA)
+
+        imgs = frames_at(video, [cam["video_start_end"][0] + SLAM_STRIDE * s for s in steps], masked_small)
         state = np.concatenate([q, g[:, None]], 1)
         for k, (s, img) in enumerate(zip(steps, imgs)):
-            img = img.copy()
-            img[mask] = 0
-            img = cv2.resize(img, (a.width, a.height), interpolation=cv2.INTER_AREA)
             nxt = steps[k + 1] if k + 1 < len(steps) else s
             ds.add_frame({"observation.images.wrist": img, "observation.state": state[s], "action": state[nxt], "task": a.task})
         ds.save_episode()

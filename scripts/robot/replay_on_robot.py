@@ -230,8 +230,19 @@ def main(a):
             plan = np.array(tr["tcp_pose_ctrl"])
             plan_i = np.array([[np.interp(tk, t, plan[:, j]) for j in range(3)] for tk in log["t"]])
             dev = np.linalg.norm(tcp[:, :3] - plan_i, axis=1) * 1000
-            print(f"fingertip vs plan: median {np.median(dev):.1f} mm, max {dev.max():.1f} mm"
-                  " (large = pendant TCP differs from tcp_z_mm, or tracking lag)")
+            # servoJ follows with a constant delay (lookahead + network): find it, then measure the real path error
+            lt = np.array(log["t"])
+
+            def lagged(lag):
+                pl = np.array([[np.interp(tk - lag, t, plan[:, j]) for j in range(3)] for tk in lt])
+                return np.linalg.norm(tcp[:, :3] - pl, axis=1) * 1000
+
+            lags = np.arange(0.0, 0.3, 0.005)
+            lag = lags[int(np.argmin([np.median(lagged(l)) for l in lags]))]
+            d = lagged(lag)
+            print(f"fingertip vs plan: robot follows {lag * 1000:.0f} ms behind the commands; path error with that delay "
+                  f"removed: median {np.median(d):.1f} mm, max {d.max():.1f} mm (without removing it: median {np.median(dev):.1f}, "
+                  f"max {dev.max():.1f} mm). A large path error means the pendant TCP differs from tcp_z_mm.")
         out = a.trajectory.with_name(a.trajectory.stem.replace("_robot_trajectory", "") + ("_robot_log.json" if a.execute else "_dryrun_log.json"))
         json.dump(log, open(out, "w"))
         print(f"saved {out}")
