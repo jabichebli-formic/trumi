@@ -127,7 +127,7 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
 
 ## Training data (both models)
 38 episodes, 9,509 frames at 30 fps (5.3 min, ~8.3 s each), from 48 recorded demos (2026-10-02, ep_0-ep_47):
-- not in the dataset plan, no usable SLAM trajectory when it was built: ep_11, 39, 41, 42, 44, 45, 46 (ep_41/42 have
-  none at all; the other five have a trajectory file now but were not in the plan, not investigated)
+- SLAM tracking lost (pipeline step 06 drops episodes with > 10 lost frames): ep_11, 39, 44, 45, 46 (lost in 66-84% of
+  their frames), ep_41, 42 (no trajectory at all); tracking broke near the plain white belt
 - SLAM tracking glitch (path jumps far from the cell, `episode_report.py`): ep_27, ep_31
 - manual: ep_4 (the return passes near a shoulder singularity, up to 497 deg/s)
