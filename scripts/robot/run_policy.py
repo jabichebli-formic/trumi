@@ -247,8 +247,9 @@ def check_chunk(chunk, q_now, a, T_marker_inv):
 class Servo:
     """Background 125 Hz loop: follows the newest chunk by wall clock with a joint-speed limit; sends gripper commands."""
 
-    def __init__(self, rc, rr, gripper, q0, g0, max_speed_deg_s):
+    def __init__(self, rc, rr, gripper, q0, g0, max_speed_deg_s, blend_s=0.0):
         self.rc, self.rr, self.gripper = rc, rr, gripper
+        self.blend_s, self.old, self.t_switch = blend_s, None, 0.0
         self.q_cmd, self.g_sent = np.array(q0, float), float(g0)
         self.vmax = np.radians(max_speed_deg_s)
         self.traj = None  # (t_start, chunk) with action i due at t_start + i / FPS
@@ -257,19 +258,30 @@ class Servo:
 
     def set_chunk(self, t_start, chunk):
         with self.lock:
+            self.old, self.t_switch = self.traj, time.time()  # crossfade from the previous chunk (blend_s)
             self.traj = (t_start, chunk)
 
-    def _target(self, now):
-        with self.lock:
-            if self.traj is None:
-                return None
-            t0, ch = self.traj
+    @staticmethod
+    def _at(traj, now):
+        t0, ch = traj
         x = (now - t0) * FPS
         if x >= len(ch) - 1:
             return ch[-1]  # chunk ran out before a new one: hold the last target
         i = max(int(x), 0)
         f = min(max(x - i, 0.0), 1.0)
         return ch[i] * (1 - f) + ch[i + 1] * f
+
+    def _target(self, now):
+        with self.lock:
+            traj, old, ts = self.traj, self.old, self.t_switch
+        if traj is None:
+            return None
+        new = self._at(traj, now)
+        if old is None or self.blend_s <= 0 or now - ts >= self.blend_s:
+            return new
+        w = (now - ts) / self.blend_s
+        w = w * w * (3 - 2 * w)  # smoothstep: no velocity jump at either end of the crossfade
+        return self._at(old, now) * (1 - w) + new * w
 
     def _run(self):
         dt = 1.0 / SERVO_HZ
@@ -416,7 +428,7 @@ def run_robot(a, out):
             if not a.yes and input("Run the policy on the robot (e-stop in hand, workspace clear)? Type 'yes': ").strip() != "yes":
                 raise SystemExit("cancelled")
             rc = rtde_control.RTDEControlInterface(a.robot_ip, frequency=SERVO_HZ)
-            servo = Servo(rc, rr, gripper, rr.getActualQ(), g_state * 255, a.max_joint_speed_deg_s)
+            servo = Servo(rc, rr, gripper, rr.getActualQ(), g_state * 255, a.max_joint_speed_deg_s, a.blend_s)
             servo.thread.start()
         t_end = time.time() + a.max_seconds if a.max_seconds > 0 else float("inf")
         print(("EXECUTING" if a.execute else "SHADOW MODE (robot does not move)")
@@ -511,6 +523,9 @@ if __name__ == "__main__":
     ap.add_argument("--gripper_force", type=int, default=50)
     ap.add_argument("--max_seconds", type=float, default=30, help="0 = run until Ctrl+C")
     ap.add_argument("--replan_s", type=float, default=0.5, help="predict a new chunk this often")
+    ap.add_argument("--blend_s", type=float, default=0.0,
+                    help="continuous replanning: crossfade from the old to the new chunk over this time (e.g. 0.25) "
+                         "instead of jumping; the new chunk is used fully after it")
     ap.add_argument("--sync_steps", type=int, default=0,
                     help="synchronous: predict, run the first N actions of the chunk (e.g. 25 = 0.83 s), predict again "
                          "(arm pauses ~0.2 s per chunk; no stitching, no RTC). 0 = continuous replanning")

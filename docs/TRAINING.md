@@ -88,3 +88,8 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   Real-time chunking (LeRobot's inference-time guidance, no retraining) steers each new chunk to continue the rest of
   the old one, on the old chunk's timeline. Offline on recorded episodes (`scripts/tools/rtc_seam_test.py`): seam
   jumps 0.6 -> 0.1 deg median, 1.9 -> 0.2 deg max, velocity 47 -> 6 deg/s max, for +21 ms per prediction.
+- **What worked on robot 1 (2026-10-06): continuous replanning** (no RTC, no sync), which was jerky. Smooth it with
+  `--blend_s 0.25`: each new chunk is crossfaded in over 0.25 s (smoothstep) and then used fully, so what the policy
+  predicts is unchanged. Replaying the logged run through the controller: velocity jumps 114 -> 16 deg/s (99th pct),
+  peak acceleration 14,300 -> 2,000 deg/s^2. RTC (horizon 25) was smooth live but kept closing at one spot; sync
+  (`--sync_steps`) also did not work for the user.
