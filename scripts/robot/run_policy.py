@@ -169,7 +169,7 @@ def compatible_checkpoint(checkpoint, cfg_class):
 
 
 class Policy:
-    def __init__(self, checkpoint, device, compile_model=False, seed=None):
+    def __init__(self, checkpoint, device, compile_model=False, seed=None, rtc_horizon=0):
         import torch
         from lerobot.configs.policies import PreTrainedConfig
         from lerobot.policies.factory import make_pre_post_processors
@@ -184,6 +184,11 @@ class Policy:
         cfg = PreTrainedConfig.from_pretrained(str(checkpoint))
         cfg.compile_model = compile_model  # training used torch.compile: the first prediction would take ~6 min
         cfg.device = device
+        self.rtc = rtc_horizon > 0
+        if self.rtc:  # real-time chunking (inference-time guidance, no retraining): new chunks continue the old one
+            from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+            cfg.rtc_config = RTCConfig(execution_horizon=rtc_horizon)
         self.policy = PI05Policy.from_pretrained(str(checkpoint), config=cfg).to(self.device).eval()
         over = {"device": device}
         pre_over = {"device_processor": over}
@@ -194,17 +199,23 @@ class Policy:
                                                        postprocessor_overrides={"device_processor": over})
         print(f"policy loaded from {checkpoint} in {time.time() - t0:.0f} s on {device}")
 
-    def chunk(self, img_rgb, state, task=TASK):
-        """img: 480x640x3 uint8 RGB (already masked), state: (7,) -> (50, 7) absolute actions."""
+    def chunk(self, img_rgb, state, task=TASK, prev_raw=None, delay=0, return_raw=False):
+        """img: 480x640x3 uint8 RGB (already masked), state: (7,) -> (50, 7) absolute actions.
+        RTC: prev_raw = the not-yet-executed rest of the current chunk as the model output it (normalised), delay =
+        actions that will be executed while this prediction runs; the new chunk is steered to continue prev_raw."""
         torch = self.torch
         obs = {"observation.images.wrist": img_rgb, "observation.state": np.asarray(state, np.float32)}
         if self.seed is not None:  # the action chunk starts from random noise: fix it to compare runs
             torch.manual_seed(self.seed)
-        with torch.inference_mode():
+        kwargs = {}
+        if self.rtc and prev_raw is not None and len(prev_raw):
+            kwargs = {"prev_chunk_left_over": torch.as_tensor(prev_raw, device=self.device), "inference_delay": int(delay)}
+        with torch.no_grad():  # not inference_mode: RTC guidance needs autograd inside the sampler
             batch = self.pre(self.prepare(obs, self.device, task, "ur5e_robotiq_2f85"))
-            a = self.policy.predict_action_chunk(batch)  # (1, T, 7), normalised
-            a = torch.stack([self.post(a[:, i, :]) for i in range(a.shape[1])], dim=1)
-        return a[0].float().cpu().numpy()
+            raw = self.policy.predict_action_chunk(batch, **kwargs)  # (1, T, 7), normalised
+            a = torch.stack([self.post(raw[:, i, :]) for i in range(raw.shape[1])], dim=1)
+        out = a[0].float().cpu().numpy()
+        return (out, raw[0].float().cpu().numpy()) if return_raw else out
 
 
 # ---------------------------------------------------------------- safety helpers
@@ -395,7 +406,7 @@ def run_robot(a, out):
             g_state = int(sk.recv(64).decode().split()[-1]) / 255.0
     cam = GoProPreview(a.gopro_ip or find_gopro_ip())
     prep = Preprocess(a.mask)
-    pol = Policy(a.checkpoint, a.device, a.compile)
+    pol = Policy(a.checkpoint, a.device, a.compile, rtc_horizon=a.rtc_horizon)
     servo, rc, log = None, None, []
     try:
         time.sleep(2)
@@ -410,16 +421,26 @@ def run_robot(a, out):
         t_end = time.time() + a.max_seconds if a.max_seconds > 0 else float("inf")
         print(("EXECUTING" if a.execute else "SHADOW MODE (robot does not move)")
               + (f" for up to {a.max_seconds:.0f} s" if a.max_seconds > 0 else " until Ctrl+C") + "; Ctrl+C to stop")
+        cur = None  # (t0, absolute chunk, raw chunk): action i of the current chunk is due at t0 + i / FPS
+        latencies = []
         while time.time() < t_end:
             t_loop = time.time()
             img, t_img = cam.latest()
             q = np.array(rr.getActualQ())
             g_state = (servo.g_sent / 255.0) if servo else g_state
             obs_img = prep(img)
-            ch = pol.chunk(obs_img, np.r_[q, g_state])
+            prev_raw, delay, t0_new = None, 0, t_img
+            if cur is not None and pol.rtc:
+                idx = int(round((t_img - cur[0]) * FPS))  # index of the current chunk being executed at the observation
+                if idx < len(cur[2]) - 1:
+                    prev_raw = cur[2][max(idx, 0):]
+                    delay = int(np.ceil(max(latencies[-5:]) * FPS)) if latencies else 0
+                    t0_new = cur[0] + max(idx, 0) / FPS  # keep the new chunk on the old chunk's timeline
+            ch, raw = pol.chunk(obs_img, np.r_[q, g_state], prev_raw=prev_raw, delay=delay, return_raw=True)
             t_ready = time.time()
+            latencies.append(t_ready - t_img)
             problems = check_chunk(ch, q, a, T_marker_inv)
-            entry = {"t": t_img, "infer_ms": (t_ready - t_loop) * 1000, "frame_age_ms": (t_loop - t_img) * 1000, "q": q.tolist(),
+            entry = {"t": t_img, "t0": t0_new, "rtc_delay": delay, "infer_ms": (t_ready - t_loop) * 1000, "frame_age_ms": (t_loop - t_img) * 1000, "q": q.tolist(),
                      "g": g_state, "chunk": np.round(ch, 5).tolist(), "problems": problems}
             log.append(entry)
             cv2.imwrite(str(out / "frames" / f"{len(log):04d}.jpg"), cv2.cvtColor(obs_img, cv2.COLOR_RGB2BGR))
@@ -434,7 +455,9 @@ def run_robot(a, out):
                 if servo.error:
                     print(f"stopping: {servo.error}")
                     break
-                servo.set_chunk(t_img, ch)  # action 0 is due one frame after the observation; past actions are skipped
+                servo.set_chunk(t0_new, ch)  # past actions are skipped by wall clock
+            if not problems:
+                cur = (t0_new, ch, raw)
             time.sleep(max(0.0, a.replan_s - (time.time() - t_loop)))
     except KeyboardInterrupt:
         print("\ninterrupted")
@@ -476,6 +499,9 @@ if __name__ == "__main__":
     ap.add_argument("--gripper_force", type=int, default=50)
     ap.add_argument("--max_seconds", type=float, default=30, help="0 = run until Ctrl+C")
     ap.add_argument("--replan_s", type=float, default=0.5, help="predict a new chunk this often")
+    ap.add_argument("--rtc_horizon", type=int, default=0,
+                    help="real-time chunking: steer each new chunk to continue the first N actions of the old one "
+                         "(0 = off; e.g. 25 with --replan_s 0.5)")
     ap.add_argument("--max_joint_speed_deg_s", type=float, default=60)
     ap.add_argument("--max_jump_deg", type=float, default=20)
     ap.add_argument("--min_height_mm", type=float, default=0, help="fingertip never below this height above the marker plane")

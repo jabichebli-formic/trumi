@@ -83,3 +83,8 @@ ssh zerogrid2 -t tmux attach -t trumi-v1           # live training output (Ctrl-
   robot or reach below the marker plane, Ctrl+C stops.
 - **Mask must match the checkpoint**: v1 = `policy_mask_2704x2028.png` (default), v2 (fingers visible) =
   `--mask data/robot/policy_mask_gripper_only_2704x2028.png`.
+- **Smooth motion: use RTC** (`--rtc_horizon 25`). Without it every new chunk (each 0.5 s) is an independent sample and
+  the target jumps where it takes over (robot 1, 90 deg/s: median 2.9 deg, max 16 deg, velocity up to 70 deg/s).
+  Real-time chunking (LeRobot's inference-time guidance, no retraining) steers each new chunk to continue the rest of
+  the old one, on the old chunk's timeline. Offline on recorded episodes (`scripts/tools/rtc_seam_test.py`): seam
+  jumps 0.6 -> 0.1 deg median, 1.9 -> 0.2 deg max, velocity 47 -> 6 deg/s max, for +21 ms per prediction.
