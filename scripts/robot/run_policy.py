@@ -85,7 +85,9 @@ class GoProPreview:
             opts = {"fflags": "nobuffer", "flags": "low_delay", "probesize": "500000", "analyzeduration": "500000"}
             with self.av.open(url, options=opts, timeout=30) as c:
                 s = c.streams.video[0]
-                s.thread_type = "AUTO"
+                # slice threads only: frame threading (AUTO/FRAME, 16 threads here) holds back 15 frames = 0.5 s at
+                # 30 fps; slice decoding holds back none and decodes 2.7K at ~110 fps (scratch test, 2026-10-06)
+                s.thread_type = "SLICE"
                 for fr in c.decode(s):
                     if self.stop_flag:
                         break
